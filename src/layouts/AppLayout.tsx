@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   Activity,
@@ -21,6 +21,7 @@ import { CitySearchModal } from '../components/common/CitySearchModal.tsx';
 import { NotificationsPanel } from '../components/common/NotificationsPanel.tsx';
 import { PreferencesModal } from '../components/common/PreferencesModal.tsx';
 import { VayuWindScene } from '../components/three/VayuWindScene.tsx';
+import { useModalFocusTrap } from '../utils/useModalFocusTrap.ts';
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Air Dashboard', icon: Activity },
@@ -52,25 +53,19 @@ export const AppLayout: React.FC = () => {
   const routeLoc = useLocation();
 
   const mobileMenuBtnRef = useRef<HTMLButtonElement | null>(null);
+  const mobileDrawerRef = useRef<HTMLElement | null>(null);
   const mobileCloseBtnRef = useRef<HTMLButtonElement | null>(null);
-
-  useEffect(() => {
-    if (!mobileMenuOpen) return;
-    mobileCloseBtnRef.current?.focus();
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setMobileMenuOpen(false);
-        mobileMenuBtnRef.current?.focus();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mobileMenuOpen]);
 
   const closeMobileMenu = () => {
     setMobileMenuOpen(false);
-    requestAnimationFrame(() => mobileMenuBtnRef.current?.focus());
   };
+
+  useModalFocusTrap({
+    open: mobileMenuOpen,
+    containerRef: mobileDrawerRef,
+    initialFocusRef: mobileCloseBtnRef,
+    onClose: closeMobileMenu,
+  });
 
   const freshnessText = loading
     ? 'Updating...'
@@ -148,7 +143,11 @@ export const AppLayout: React.FC = () => {
             onClick={closeMobileMenu}
             aria-hidden="true"
           />
-          <aside className="relative z-10 w-72 max-w-[82vw] bg-[#0B1928] border-r border-white/10 flex flex-col">
+          <aside
+            ref={mobileDrawerRef}
+            tabIndex={-1}
+            className="relative z-10 w-72 max-w-[82vw] bg-[#0B1928] border-r border-white/10 flex flex-col focus:outline-none"
+          >
             <div className="h-14 px-4 flex items-center justify-between border-b border-white/10">
               <Link
                 to="/"

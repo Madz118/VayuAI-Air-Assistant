@@ -61,11 +61,11 @@ Express Server (server.ts — Rate Limited, Input Validated, Secret Isolated)
 ```
 
 ### How the Five Agents Work
-1. **Pollution Intelligence Agent** (`src/agents/pollutionIntelligenceAgent.ts`): Parses hourly PM2.5, PM10, NO₂, O₃, SO₂, and CO, identifies the dominant pollutant via WHO 2021 guideline ratios, evaluates 12h/24h trends, and measures completeness.
-2. **Family Protection Agent** (`src/agents/familyProtectionAgent.ts`): Evaluates household groups (children, older adults, respiratory sensitivities) and outputs practical precautions while strictly avoiding clinical diagnosis or prescriptions.
-3. **Smart Routine Agent** (`src/agents/smartRoutineAgent.ts`): Groups forecast hours into 3-hour blocks (`06:00–21:00`), scores suitability per activity exertion level, and surfaces indoor alternatives without ever promising zero risk.
-4. **Sustainability Agent** (`src/agents/sustainabilityAgent.ts`): Gates cycling/walking advice by ambient AQI and provides transparent commute emission trade-offs using documented DEFRA-aligned factors.
-5. **Verification Agent** (`src/agents/verificationAgent.ts`): Validates timestamp freshness, checks data completeness, enforces US AQI vs EU EAQI vs Indian CPCB separation, blocks absolute safety guarantees (`"100% safe"`), and flags cross-agent contradictions.
+1. **Pollution Intelligence Agent** (`src/agents/pollutionIntelligenceAgent.ts`): Parses hourly PM2.5, PM10, NO₂, O₃, SO₂, and CO, identifies the dominant pollutant via single-hour screening ratios against WHO 2021 reference levels (24-hour mean for PM2.5/PM10/NO₂/SO₂/CO; 8-hour daily maximum mean for O₃, explicitly labelled as screening comparisons rather than formal compliance exceedances), evaluates 12h trends, and measures completeness.
+2. **Family Protection Agent** (`src/agents/familyProtectionAgent.ts`): Evaluates household groups (children, older adults, respiratory sensitivities) and outputs practical precautions while strictly avoiding clinical diagnosis or prescriptions, downgrading confidence when environmental data is stale or incomplete.
+3. **Smart Routine Agent** (`src/agents/smartRoutineAgent.ts`): Groups forecast hours into 3-hour blocks (`06:00–21:00`), scores suitability strictly against the selected AQI scale (`US AQI` or `EU EAQI`) and activity exertion level, and surfaces indoor alternatives without ever promising zero risk.
+4. **Sustainability Agent** (`src/agents/sustainabilityAgent.ts`): Gates cycling/walking advice by ambient AQI under the active scale and provides transparent commute emission trade-offs using documented DEFRA-aligned factors.
+5. **Verification Agent** (`src/agents/verificationAgent.ts`): Validates timestamp freshness, checks data completeness, audits every individual 3-hour forecast window, enforces US AQI vs EU EAQI vs Indian CPCB separation, blocks unsafe certainty/medical claims, and actively rejects or replaces ungrounded synthesis output before returning responses.
 
 ---
 
@@ -82,17 +82,17 @@ Express Server (server.ts — Rate Limited, Input Validated, Secret Isolated)
 ## Implementation Status
 
 - **Fully Implemented**:
-  - Full-stack Express + Vite server (`server.ts`) with rate limiting and input validation
+  - Full-stack Express + Vite server (`server.ts`) with sliding-window per-IP rate limiting (periodic cleanup), security headers, and strict request validation
   - Live Open-Meteo Air Quality, Weather, Local Grid, and Geocoding integrations with TTL caching
-  - All 5 deterministic agents + VAYU Orchestrator + server-side Gemini (`gemini-4-hydrogen`) structured synthesis
-  - Signature 3D Three.js wind scene with software-WebGL pacing and reduced-motion/fallback support
-  - All 8 application pages (`Landing`, `Dashboard`, `Pollution Map`, `Ask VAYU AI`, `Smart Routine Planner`, `Family Protection`, `Sustainability & Community`, `About & Methodology`)
+  - All 5 deterministic agents + VAYU Orchestrator + server-side Gemini (`gemini-4-hydrogen`) structured synthesis with active Verification Agent enforcement
+  - Signature 3D Three.js wind scene with software-WebGL pacing, reduced-motion, visibility pausing, and CSS fallback
+  - All 8 application routes (`Landing`, `Dashboard`, `Pollution Map`, `Ask VAYU AI`, `Smart Routine Planner`, `Family Protection`, `Sustainability & Community`, `About & Methodology`)
   - Automated unit and orchestrator test suite (`src/tests/vayu.test.ts`)
-- **Partially Implemented / Session-Scoped**:
-  - Community Observations are stored in server memory (reset on server restart) and seeded with 2 explicitly labelled demonstration reports for immediate evaluation.
+- **Demonstration-Only Local Community Storage**:
+  - Community Observations (`src/services/communityStore.ts`) persist locally in atomic, bounded JSON storage (`data/community-reports.json`, capped at 100 entries, falling back to `ephemeral_demo` in-memory mode if disk writes are unavailable) and are seeded with 2 explicitly labelled demonstration entries. Deletion requires a per-report SHA-256-hashed author token (held in browser session memory) or an optional server `COMMUNITY_ADMIN_TOKEN`; flagging is deduplicated per IP hash.
 - **Planned for Future Releases**:
   - Integration with official physical ground-station feeds (e.g., OpenAQ / CPCB station APIs) alongside modelled grid forecasts for hyper-local calibration.
-  - Persistent database storage for community moderation queues.
+  - External managed database storage and moderator accounts for multi-region community moderation.
 
 ---
 
@@ -102,6 +102,7 @@ Express Server (server.ts — Rate Limited, Input Validated, Secret Isolated)
 Defined in `.env.example` (set in AI Studio **Settings > Secrets**; never commit real keys):
 - `GEMINI_API_KEY`: Server-side Gemini API key used exclusively in `src/services/geminiService.ts`.
 - `APP_URL`: Application hosting URL.
+- `COMMUNITY_ADMIN_TOKEN`: Optional server-side moderation secret (>= 12 chars) for community report moderation.
 
 ### Local Development
 ```bash
@@ -128,6 +129,7 @@ npm start
 ## Privacy & Security Considerations
 
 - `GEMINI_API_KEY` is accessed strictly on the Node.js server and never bundled into client assets.
-- Household profiles and checklist progress are stored exclusively in browser `localStorage`.
+- Full household member names/labels and optional sensitivity notes are stored exclusively in browser `localStorage`. When using **Ask VAYU AI**, only anonymized exposure categories (`group`: `adult` | `child` | `older_adult`, and `hasRespiratorySensitivity` boolean) are transmitted to the server and Gemini API—personal names and free-text notes remain on your device.
 - Browser geolocation and community observations require explicit user consent.
 - External API errors surface honest retry prompts and never substitute fake environmental readings.
+

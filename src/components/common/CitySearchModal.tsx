@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { LocateFixed, MapPin, Search, X } from 'lucide-react';
 import { PRESET_CITIES } from '../../config/constants.ts';
 import type { CityLocation } from '../../types/airQuality.ts';
+import { useModalFocusTrap } from '../../utils/useModalFocusTrap.ts';
 
 interface CitySearchModalProps {
   open: boolean;
@@ -21,19 +22,15 @@ export const CitySearchModal: React.FC<CitySearchModalProps> = ({
   const [searching, setSearching] = useState(false);
   const [geoLoading, setGeoLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    requestAnimationFrame(() => inputRef.current?.focus());
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  useModalFocusTrap({
+    open,
+    containerRef: dialogRef,
+    initialFocusRef: inputRef,
+    onClose,
+  });
 
   if (!open) return null;
 
@@ -99,7 +96,11 @@ export const CitySearchModal: React.FC<CitySearchModalProps> = ({
       }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-[#07111F]/80 p-4"
     >
-      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0B1928] p-6 shadow-2xl">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0B1928] p-6 shadow-2xl focus:outline-none"
+      >
         <div className="flex items-center justify-between gap-4">
           <h2 id="city-modal-title" className="text-lg font-semibold text-[#F2F7FA]">
             Select Urban Location

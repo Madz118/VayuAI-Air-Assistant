@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_CITY } from '../config/constants.ts';
 import type {
   CityLocation,
@@ -34,6 +34,9 @@ interface VayuContextValue {
   dismissNotification: (id: string) => void;
   completedChecklistIds: string[];
   toggleChecklistItem: (id: string) => void;
+  communityAuthorTokens: Record<string, string>;
+  registerCommunityAuthorToken: (reportId: string, token: string) => void;
+  clearCommunityAuthorToken: (reportId: string) => void;
 }
 
 const VayuContext = createContext<VayuContextValue | null>(null);
@@ -94,14 +97,36 @@ export function VayuProvider({ children }: { children: React.ReactNode }) {
     readStorage<string[]>(STORAGE_KEYS.checklist, []),
   );
 
+  // Ephemeral session memory for community observation removal tokens (never persisted to localStorage)
+  const [communityAuthorTokens, setCommunityAuthorTokens] = useState<Record<string, string>>({});
+
   const [dataset, setDataset] = useState<EnvironmentalDataset | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>([]);
+  const fetchSeqRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const fetchForLocation = useCallback(async (loc: CityLocation) => {
+    const seq = ++fetchSeqRef.current;
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Clear stale environmental dataset when switching to a different city so City A never renders under City B
+    setDataset((prev) => {
+      if (
+        prev &&
+        Math.abs(prev.location.latitude - loc.latitude) < 0.001 &&
+        Math.abs(prev.location.longitude - loc.longitude) < 0.001
+      ) {
+        return prev;
+      }
+      return null;
+    });
     setLoading(true);
     setError(null);
+
     try {
       const url = new URL('/api/air-quality', window.location.origin);
       url.searchParams.set('lat', String(loc.latitude));
@@ -110,22 +135,34 @@ export function VayuProvider({ children }: { children: React.ReactNode }) {
       if (loc.country) url.searchParams.set('country', loc.country);
       if (loc.region) url.searchParams.set('region', loc.region);
 
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), { signal: controller.signal });
       const json = await res.json();
       if (!res.ok) {
         throw new Error(json.error || `Request failed with status ${res.status}`);
       }
-      setDataset(json as EnvironmentalDataset);
+      if (seq === fetchSeqRef.current) {
+        setDataset(json as EnvironmentalDataset);
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to reach environmental data service.';
-      setError(message);
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      if (seq === fetchSeqRef.current) {
+        const message = err instanceof Error ? err.message : 'Unable to reach environmental data service.';
+        setError(message);
+      }
     } finally {
-      setLoading(false);
+      if (seq === fetchSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     fetchForLocation(location);
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, [location, fetchForLocation]);
 
   const setLocation = useCallback((loc: CityLocation) => {
@@ -213,6 +250,19 @@ export function VayuProvider({ children }: { children: React.ReactNode }) {
     setDismissedNotificationIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
   }, []);
 
+  const registerCommunityAuthorToken = useCallback((reportId: string, token: string) => {
+    setCommunityAuthorTokens((prev) => ({ ...prev, [reportId]: token }));
+  }, []);
+
+  const clearCommunityAuthorToken = useCallback((reportId: string) => {
+    setCommunityAuthorTokens((prev) => {
+      if (!(reportId in prev)) return prev;
+      const next = { ...prev };
+      delete next[reportId];
+      return next;
+    });
+  }, []);
+
   const notifications = useMemo<VayuNotification[]>(() => {
     if (!dataset) return [];
     const items: VayuNotification[] = [];
@@ -284,6 +334,9 @@ export function VayuProvider({ children }: { children: React.ReactNode }) {
       dismissNotification,
       completedChecklistIds,
       toggleChecklistItem,
+      communityAuthorTokens,
+      registerCommunityAuthorToken,
+      clearCommunityAuthorToken,
     }),
     [
       location,
@@ -303,6 +356,9 @@ export function VayuProvider({ children }: { children: React.ReactNode }) {
       dismissNotification,
       completedChecklistIds,
       toggleChecklistItem,
+      communityAuthorTokens,
+      registerCommunityAuthorToken,
+      clearCommunityAuthorToken,
     ],
   );
 

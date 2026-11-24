@@ -23,7 +23,16 @@ import {
 } from '../utils/sustainabilityCalc.ts';
 
 export const CommunityPage: React.FC = () => {
-  const { dataset, location, preferences, completedChecklistIds, toggleChecklistItem } = useVayu();
+  const {
+    dataset,
+    location,
+    preferences,
+    completedChecklistIds,
+    toggleChecklistItem,
+    communityAuthorTokens,
+    registerCommunityAuthorToken,
+    clearCommunityAuthorToken,
+  } = useVayu();
   const [activeTab, setActiveTab] = useState<'sustainability' | 'community'>('sustainability');
 
   // Transparent commute calculator state
@@ -51,14 +60,6 @@ export const CommunityPage: React.FC = () => {
   // Community observations state
   const [reports, setReports] = useState<CommunityReport[]>([]);
   const [persistenceNote, setPersistenceNote] = useState<string>('');
-  const [authorTokens, setAuthorTokens] = useState<Record<string, string>>(() => {
-    try {
-      const raw = localStorage.getItem('vayu_community_author_tokens_v1');
-      return raw ? (JSON.parse(raw) as Record<string, string>) : {};
-    } catch {
-      return {};
-    }
-  });
   const [loadingReports, setLoadingReports] = useState(false);
   const [category, setCategory] = useState<ObservationCategory>('traffic_exhaust');
   const [description, setDescription] = useState('');
@@ -66,15 +67,6 @@ export const CommunityPage: React.FC = () => {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  const saveAuthorTokens = (next: Record<string, string>) => {
-    setAuthorTokens(next);
-    try {
-      localStorage.setItem('vayu_community_author_tokens_v1', JSON.stringify(next));
-    } catch {
-      // Ignore storage quota errors
-    }
-  };
 
   const fetchReports = async () => {
     setLoadingReports(true);
@@ -86,7 +78,11 @@ export const CommunityPage: React.FC = () => {
         if (typeof json.persistenceNote === 'string') {
           setPersistenceNote(json.persistenceNote);
         }
+      } else {
+        setActionMessage(json.error || 'Unable to load community observations.');
       }
+    } catch {
+      setActionMessage('Unable to reach community observation service.');
     } finally {
       setLoadingReports(false);
     }
@@ -128,7 +124,7 @@ export const CommunityPage: React.FC = () => {
         throw new Error(json.error || 'Submission failed.');
       }
       if (json.report?.id && typeof json.authorToken === 'string') {
-        saveAuthorTokens({ ...authorTokens, [json.report.id]: json.authorToken });
+        registerCommunityAuthorToken(json.report.id, json.authorToken);
       }
       setDescription('');
       setConsentGiven(false);
@@ -157,7 +153,7 @@ export const CommunityPage: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     setActionMessage(null);
-    const token = authorTokens[id];
+    const token = communityAuthorTokens[id];
     const res = await fetch(`/api/community/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       headers: token ? { 'X-Report-Token': token } : {},
@@ -168,9 +164,7 @@ export const CommunityPage: React.FC = () => {
       return;
     }
     if (token) {
-      const next = { ...authorTokens };
-      delete next[id];
-      saveAuthorTokens(next);
+      clearCommunityAuthorToken(id);
     }
     await fetchReports();
   };
@@ -548,7 +542,7 @@ export const CommunityPage: React.FC = () => {
                           >
                             <Flag className="w-3.5 h-3.5" />
                           </button>
-                          {!rep.isDemonstration && Boolean(authorTokens[rep.id]) && (
+                          {!rep.isDemonstration && Boolean(communityAuthorTokens[rep.id]) && (
                             <button
                               type="button"
                               onClick={() => handleDelete(rep.id)}

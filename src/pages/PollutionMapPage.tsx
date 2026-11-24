@@ -17,6 +17,42 @@ interface GridPoint {
   timestamp: string;
 }
 
+function createPopupElement(params: {
+  title: string;
+  scaleLabel: string;
+  scaleValue: number | null;
+  pm25: number | null;
+  footer: string;
+}): HTMLElement {
+  const root = document.createElement('div');
+  root.style.fontFamily = 'sans-serif';
+  root.style.minWidth = '175px';
+
+  const titleEl = document.createElement('strong');
+  titleEl.textContent = params.title;
+  root.appendChild(titleEl);
+  root.appendChild(document.createElement('br'));
+
+  const scaleSpan = document.createElement('span');
+  scaleSpan.textContent = `${params.scaleLabel}: `;
+  const scaleBold = document.createElement('b');
+  scaleBold.textContent = params.scaleValue !== null ? String(params.scaleValue) : 'N/A';
+  scaleSpan.appendChild(scaleBold);
+  root.appendChild(scaleSpan);
+  root.appendChild(document.createElement('br'));
+
+  const pmSpan = document.createElement('span');
+  pmSpan.textContent = `PM2.5: ${params.pm25 !== null ? params.pm25.toFixed(1) : '—'} µg/m³`;
+  root.appendChild(pmSpan);
+  root.appendChild(document.createElement('br'));
+
+  const smallEl = document.createElement('small');
+  smallEl.textContent = params.footer;
+  root.appendChild(smallEl);
+
+  return root;
+}
+
 export const PollutionMapPage: React.FC = () => {
   const { location, setLocation, dataset, preferences } = useVayu();
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -32,6 +68,7 @@ export const PollutionMapPage: React.FC = () => {
   );
   const [compareData, setCompareData] = useState<EnvironmentalDataset | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
   const [geoStatus, setGeoStatus] = useState<string | null>(null);
 
   // Initialize Leaflet map once
@@ -97,6 +134,8 @@ export const PollutionMapPage: React.FC = () => {
     let active = true;
     const loadCompare = async () => {
       setCompareLoading(true);
+      setCompareError(null);
+      setCompareData(null);
       try {
         const url = new URL('/api/air-quality', window.location.origin);
         url.searchParams.set('lat', String(compareCity.latitude));
@@ -104,12 +143,15 @@ export const PollutionMapPage: React.FC = () => {
         url.searchParams.set('name', compareCity.name);
         url.searchParams.set('country', compareCity.country);
         const res = await fetch(url.toString());
-        if (res.ok) {
-          const json = (await res.json()) as EnvironmentalDataset;
-          if (active) setCompareData(json);
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.error || `Comparison lookup failed (${res.status}).`);
         }
-      } catch {
-        // Handled cleanly in UI
+        if (active) setCompareData(json as EnvironmentalDataset);
+      } catch (err) {
+        if (active) {
+          setCompareError(err instanceof Error ? err.message : 'Unable to load comparison city data.');
+        }
       } finally {
         if (active) setCompareLoading(false);
       }
@@ -146,12 +188,13 @@ export const PollutionMapPage: React.FC = () => {
       fillOpacity: 0.9,
     });
     centerMarker.bindPopup(
-      `<div style="font-family:sans-serif;min-width:180px">
-        <strong>${location.name}</strong><br/>
-        <span>${mainCat.label}: <b>${mainCat.value ?? 'N/A'}</b></span><br/>
-        <span>PM2.5: ${dataset?.current.pm2_5?.toFixed(1) ?? '—'} µg/m³</span><br/>
-        <small>Modelled Open-Meteo CAMS node</small>
-      </div>`,
+      createPopupElement({
+        title: location.name,
+        scaleLabel: mainCat.label,
+        scaleValue: mainCat.value,
+        pm25: dataset?.current.pm2_5 ?? null,
+        footer: 'Modelled Open-Meteo CAMS node',
+      }),
     );
     centerMarker.addTo(group);
 
@@ -166,12 +209,13 @@ export const PollutionMapPage: React.FC = () => {
         fillOpacity: 0.72,
       });
       marker.bindPopup(
-        `<div style="font-family:sans-serif;min-width:170px">
-          <strong>${pt.label}</strong><br/>
-          <span>${cat.label}: <b>${cat.value ?? 'N/A'}</b></span><br/>
-          <span>PM2.5: ${pt.pm2_5?.toFixed(1) ?? '—'} µg/m³</span><br/>
-          <small>CAMS grid point (${pt.timestamp})</small>
-        </div>`,
+        createPopupElement({
+          title: pt.label,
+          scaleLabel: cat.label,
+          scaleValue: cat.value,
+          pm25: pt.pm2_5,
+          footer: `CAMS grid point (${pt.timestamp})`,
+        }),
       );
       marker.addTo(group);
     }
@@ -277,7 +321,9 @@ export const PollutionMapPage: React.FC = () => {
             <h2 className="text-sm font-semibold text-[#F2F7FA]">Quick City Switch</h2>
             <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label="Quick city switch">
               {PRESET_CITIES.map((c) => {
-                const active = c.name === location.name;
+                const active =
+                  Math.abs(c.latitude - location.latitude) < 0.05 &&
+                  Math.abs(c.longitude - location.longitude) < 0.05;
                 return (
                   <button
                     key={c.id}
@@ -350,10 +396,18 @@ export const PollutionMapPage: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {compareError && (
+              <p role="alert" className="mt-3 text-xs text-amber-300">
+                {compareError}
+              </p>
+            )}
           </section>
 
           {gridError && (
-            <p className="text-xs text-amber-300">{gridError}</p>
+            <p role="alert" className="text-xs text-amber-300">
+              {gridError}
+            </p>
           )}
         </div>
       </div>

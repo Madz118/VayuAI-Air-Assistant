@@ -29,11 +29,15 @@ export const RoutinePlannerPage: React.FC = () => {
   }, [availableDates, selectedDate]);
 
   useEffect(() => {
-    if (!selectedDate) return;
+    if (!selectedDate) {
+      setPlan(null);
+      return;
+    }
     let active = true;
     const fetchPlan = async () => {
       setLoading(true);
       setError(null);
+      setPlan(null);
       try {
         const res = await fetch('/api/routine-plan', {
           method: 'POST',
@@ -49,7 +53,10 @@ export const RoutinePlannerPage: React.FC = () => {
         if (!res.ok) throw new Error(json.error || 'Failed to generate routine plan.');
         if (active) setPlan(json as RoutinePlanResult);
       } catch (err) {
-        if (active) setError(err instanceof Error ? err.message : 'Unable to compute routine plan.');
+        if (active) {
+          setPlan(null);
+          setError(err instanceof Error ? err.message : 'Unable to compute routine plan.');
+        }
       } finally {
         if (active) setLoading(false);
       }

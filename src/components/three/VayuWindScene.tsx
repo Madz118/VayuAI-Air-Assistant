@@ -180,6 +180,7 @@ export const VayuWindScene: React.FC<VayuWindSceneProps> = ({
 
   const intensityRef = useRef(intensity);
   const reducedMotionRef = useRef(reducedMotion);
+  const syncSceneRef = useRef<(() => void) | null>(null);
   intensityRef.current = intensity;
   reducedMotionRef.current = reducedMotion;
 
@@ -444,10 +445,19 @@ export const VayuWindScene: React.FC<VayuWindSceneProps> = ({
     renderer.domElement.addEventListener('webglcontextlost', onContextLost);
     renderer.domElement.addEventListener('webglcontextrestored', onContextRestored);
 
+    syncSceneRef.current = () => {
+      if (disposed) return;
+      cancelAnimationFrame(frameId);
+      clearTimeout(frameId);
+      lastNow = performance.now();
+      tick();
+    };
+
     tick();
 
     return () => {
       disposed = true;
+      syncSceneRef.current = null;
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
       window.removeEventListener('pointermove', onPointerMove);
@@ -464,6 +474,10 @@ export const VayuWindScene: React.FC<VayuWindSceneProps> = ({
         container.removeChild(renderer.domElement);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    syncSceneRef.current?.();
   }, [reducedMotion, intensity]);
 
   if (fallbackActive) {

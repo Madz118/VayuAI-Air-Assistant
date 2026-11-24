@@ -257,9 +257,13 @@ export async function runVayuOrchestrator(params: {
     ]),
   );
 
-  const environmentalEvidence = Array.from(
+  const collectedEvidence = Array.from(
     new Set(specialistResults.flatMap((a) => a.evidence).slice(0, 8)),
   );
+  const environmentalEvidence =
+    collectedEvidence.length > 0
+      ? collectedEvidence
+      : ['Live environmental dataset is currently unavailable; no sensor or model metrics could be verified.'];
 
   return {
     requestId,

@@ -20,7 +20,9 @@ import { calculateTransparentCommuteComparison } from '../utils/sustainabilityCa
 import {
   anonymizeHouseholdProfilesForLlm,
   checkTimestampFreshness,
+  escapeHtml,
   sanitizeCityQuery,
+  sanitizePlainText,
   validateCalendarDate,
   validateCommunityReportInput,
   validateCoordinates,
@@ -502,3 +504,32 @@ test('Multi-agent orchestrator handles Gemini failure gracefully without fabrica
   assert.ok(response.agentsInvolved.includes('Verification Agent'));
   assert.ok(response.directAnswer.length > 10);
 });
+
+test('Sanitization & HTML escaping prevent script injection and control character bleed', () => {
+  const escaped = escapeHtml('<img src=x onerror="alert(1)"> & \'test\'');
+  assert.equal(escaped.includes('<'), false);
+  assert.equal(escaped.includes('>'), false);
+  assert.ok(escaped.includes('&lt;img'));
+  assert.ok(escaped.includes('&quot;'));
+  assert.ok(escaped.includes('&#39;'));
+
+  const sanitized = sanitizePlainText('Chennai\n<script>alert(1)</script>\t{bad}', 40);
+  assert.equal(sanitized.includes('<'), false);
+  assert.equal(sanitized.includes('\n'), false);
+  assert.equal(sanitized.includes('{'), false);
+});
+
+test('Orchestrator refuses confident guidance when live environmental dataset is completely unavailable', async () => {
+  const response = await runVayuOrchestrator({
+    query: 'Can I jog outside right now?',
+    dataset: null,
+    profiles: [],
+    preferredScale: 'us_aqi',
+  });
+
+  assert.equal(response.verification.passed, false);
+  assert.equal(response.aiSynthesized, false);
+  assert.ok(response.environmentalEvidence[0].includes('unavailable'));
+  assert.ok(response.directAnswer.toLowerCase().includes('unavailable'));
+});
+

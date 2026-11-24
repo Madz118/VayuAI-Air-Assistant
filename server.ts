@@ -22,6 +22,7 @@ import {
 import { SlidingWindowRateLimiter } from './src/utils/rateLimiter.ts';
 import {
   sanitizeCityQuery,
+  sanitizePlainText,
   validateActivityType,
   validateAqiScale,
   validateCalendarDate,
@@ -38,6 +39,16 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
+  next();
+});
 
 app.use(express.json({ limit: '100kb' }));
 
@@ -105,14 +116,11 @@ app.get('/api/air-quality', async (req, res) => {
       return res.status(400).json({ error: coords.error ?? 'Invalid coordinates.' });
     }
 
-    const name =
-      typeof req.query.name === 'string' && req.query.name.trim()
-        ? req.query.name.trim().replace(/[<>]/g, '').slice(0, 80)
-        : DEFAULT_CITY.name;
-    const country =
-      typeof req.query.country === 'string' ? req.query.country.trim().replace(/[<>]/g, '').slice(0, 60) : '';
-    const region =
-      typeof req.query.region === 'string' ? req.query.region.trim().replace(/[<>]/g, '').slice(0, 60) : undefined;
+    const cleanName = typeof req.query.name === 'string' ? sanitizePlainText(req.query.name, 80) : '';
+    const name = cleanName.length > 0 ? cleanName : DEFAULT_CITY.name;
+    const country = typeof req.query.country === 'string' ? sanitizePlainText(req.query.country, 60) : '';
+    const cleanRegion = typeof req.query.region === 'string' ? sanitizePlainText(req.query.region, 60) : '';
+    const region = cleanRegion.length > 0 ? cleanRegion : undefined;
 
     const dataset = await fetchEnvironmentalDataset({
       name,

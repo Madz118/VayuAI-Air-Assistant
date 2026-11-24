@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
 import { AlertTriangle, Bell, Check, Info, ShieldAlert, X } from 'lucide-react';
 import type { VayuNotification } from '../../context/VayuContext.tsx';
+import { useModalFocusTrap } from '../../utils/useModalFocusTrap.ts';
 
 interface NotificationsPanelProps {
   open: boolean;
@@ -15,27 +16,26 @@ export const NotificationsPanel: React.FC<NotificationsPanelProps> = ({
   notifications,
   onDismiss,
 }) => {
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    requestAnimationFrame(() => closeBtnRef.current?.focus());
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  useModalFocusTrap({
+    open,
+    containerRef: panelRef,
+    initialFocusRef: closeBtnRef,
+    onClose,
+  });
 
   if (!open) return null;
 
   return (
     <div
+      ref={panelRef}
+      tabIndex={-1}
       role="dialog"
+      aria-modal="true"
       aria-label="Environmental advisories and notifications"
-      className="fixed right-4 top-16 z-50 w-[min(380px,calc(100vw-2rem))] rounded-2xl border border-white/10 bg-[#0B1928] p-4 shadow-2xl"
+      className="fixed right-4 top-16 z-50 w-[min(380px,calc(100vw-2rem))] rounded-2xl border border-white/10 bg-[#0B1928] p-4 shadow-2xl focus:outline-none"
     >
       <div className="flex items-center justify-between gap-3 pb-3 border-b border-white/10">
         <div className="flex items-center gap-2">

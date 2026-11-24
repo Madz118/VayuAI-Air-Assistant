@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -17,26 +17,22 @@ import {
 import { VayuWindScene } from '../components/three/VayuWindScene.tsx';
 import { useVayu } from '../context/VayuContext.tsx';
 import { interpretAqiCategory } from '../utils/aqi.ts';
+import { useModalFocusTrap } from '../utils/useModalFocusTrap.ts';
 import { AqiScaleBadge } from '../components/common/AqiScaleBadge.tsx';
 
 export const LandingPage: React.FC = () => {
   const { dataset, preferences, location } = useVayu();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuBtnRef = useRef<HTMLButtonElement | null>(null);
+  const mobileDrawerRef = useRef<HTMLElement | null>(null);
   const mobileCloseBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  useEffect(() => {
-    if (!mobileMenuOpen) return;
-    mobileCloseBtnRef.current?.focus();
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setMobileMenuOpen(false);
-        mobileMenuBtnRef.current?.focus();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mobileMenuOpen]);
+  useModalFocusTrap({
+    open: mobileMenuOpen,
+    containerRef: mobileDrawerRef,
+    initialFocusRef: mobileCloseBtnRef,
+    onClose: () => setMobileMenuOpen(false),
+  });
 
   const aqiVal =
     dataset && (preferences.preferredScale === 'european_aqi' ? dataset.current.european_aqi : dataset.current.us_aqi);
@@ -146,13 +142,14 @@ export const LandingPage: React.FC = () => {
         >
           <div
             className="fixed inset-0 bg-[#07111F]/80"
-            onClick={() => {
-              setMobileMenuOpen(false);
-              requestAnimationFrame(() => mobileMenuBtnRef.current?.focus());
-            }}
+            onClick={() => setMobileMenuOpen(false)}
             aria-hidden="true"
           />
-          <aside className="relative z-10 w-72 max-w-[82vw] bg-[#0B1928] border-r border-white/10 flex flex-col">
+          <aside
+            ref={mobileDrawerRef}
+            tabIndex={-1}
+            className="relative z-10 w-72 max-w-[82vw] bg-[#0B1928] border-r border-white/10 flex flex-col focus:outline-none"
+          >
             <div className="h-16 px-4 flex items-center justify-between border-b border-white/10">
               <span className="flex items-center gap-2 font-display text-base font-bold text-[#F2F7FA]">
                 <Wind className="w-4 h-4 text-[#49E3D0]" aria-hidden="true" />
@@ -161,10 +158,7 @@ export const LandingPage: React.FC = () => {
               <button
                 ref={mobileCloseBtnRef}
                 type="button"
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  requestAnimationFrame(() => mobileMenuBtnRef.current?.focus());
-                }}
+                onClick={() => setMobileMenuOpen(false)}
                 aria-label="Close navigation menu"
                 className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-[#B5C7D4] hover:bg-white/5 hover:text-[#F2F7FA]"
               >

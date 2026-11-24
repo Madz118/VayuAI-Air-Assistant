@@ -9,12 +9,21 @@ import type {
   ObservationCategory,
 } from '../types/airQuality.ts';
 
-function sanitizePlainText(value: string, maxLen: number): string {
+export function sanitizePlainText(value: string, maxLen: number): string {
   return value
     .replace(/[<>{}`\r\n\t]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLen);
+}
+
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export function validateCoordinates(lat: unknown, lon: unknown): {

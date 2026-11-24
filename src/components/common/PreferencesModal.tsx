@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
 import { SlidersHorizontal, X } from 'lucide-react';
 import type { UserPreferences } from '../../types/airQuality.ts';
+import { useModalFocusTrap } from '../../utils/useModalFocusTrap.ts';
 
 interface PreferencesModalProps {
   open: boolean;
@@ -15,19 +16,15 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
   preferences,
   onUpdate,
 }) => {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    requestAnimationFrame(() => closeBtnRef.current?.focus());
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  useModalFocusTrap({
+    open,
+    containerRef: dialogRef,
+    initialFocusRef: closeBtnRef,
+    onClose,
+  });
 
   if (!open) return null;
 
@@ -41,7 +38,11 @@ export const PreferencesModal: React.FC<PreferencesModalProps> = ({
       }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-[#07111F]/80 p-4"
     >
-      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0B1928] p-6 shadow-2xl">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0B1928] p-6 shadow-2xl focus:outline-none"
+      >
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="w-4 h-4 text-[#49E3D0]" aria-hidden="true" />

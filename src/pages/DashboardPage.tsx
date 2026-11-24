@@ -122,6 +122,25 @@ export const DashboardPage: React.FC = () => {
 
       {dataset && (
         <>
+          {(dataset.isStale || dataset.completenessRatio < 0.75) && (
+            <div
+              role="status"
+              className="rounded-xl border border-amber-400/35 bg-amber-500/10 px-4 py-3 flex items-start gap-3 text-xs text-amber-200"
+            >
+              <Info className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" aria-hidden="true" />
+              <p className="leading-relaxed">
+                <strong className="text-[#F2F7FA]">Data Quality Notice:</strong>{' '}
+                {dataset.isStale
+                  ? `Latest modelled timestamp is ${dataset.dataAgeMinutes} minutes old. `
+                  : ''}
+                {dataset.completenessRatio < 0.75
+                  ? `Only ${Math.round(dataset.completenessRatio * 100)}% of core pollutants are present (missing: ${dataset.missingFields.join(', ')}). `
+                  : ''}
+                Agent recommendations are held at lowered confidence until fresh readings arrive.
+              </p>
+            </div>
+          )}
+
           {/* Hero Row: Main AQI Card + Weather Overview */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
             <section
