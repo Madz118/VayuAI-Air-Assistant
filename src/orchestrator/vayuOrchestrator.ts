@@ -2,7 +2,10 @@ import { runFamilyProtectionAgent } from '../agents/familyProtectionAgent.ts';
 import { runPollutionIntelligenceAgent } from '../agents/pollutionIntelligenceAgent.ts';
 import { runSmartRoutineAgent } from '../agents/smartRoutineAgent.ts';
 import { runSustainabilityAgent } from '../agents/sustainabilityAgent.ts';
-import { runVerificationAgent } from '../agents/verificationAgent.ts';
+import {
+  verifyAndEnforceSynthesis,
+  type SynthesisDraft,
+} from '../agents/verificationAgent.ts';
 import type {
   ActivityType,
   AgentName,
@@ -11,15 +14,11 @@ import type {
   EnvironmentalDataset,
   HouseholdProfile,
   OrchestratorResponse,
+  RoutineWindow,
 } from '../types/airQuality.ts';
+import { validateHouseholdProfiles } from '../utils/validators.ts';
 
-export interface SynthesizedExplanation {
-  directAnswer: string;
-  explanation: string;
-  recommendedActions: string[];
-  aiSynthesized: boolean;
-  aiError?: string;
-}
+export type SynthesizedExplanation = SynthesisDraft;
 
 export type AiSynthesizerFn = (context: {
   query: string;
@@ -28,7 +27,30 @@ export type AiSynthesizerFn = (context: {
   preferredScale: AqiScale;
   agentResults: AgentResult[];
   profiles: HouseholdProfile[];
+  routineWindows?: RoutineWindow[];
 }) => Promise<SynthesizedExplanation>;
+
+const DIAGNOSTIC_RE =
+  /\b(why|what(?:'s| is)\s+(?:the\s+)?(?:aqi|air\s*quality|pollution)|which\s+pollutant\w*|pm2\.?5|pm10|ozone|o3|no2|so2|smog|haze|trend|increas\w*|spike\w*|forecast)\b/;
+const DAY_AFTER_TOMORROW_RE = /\b(day\s+after\s+tomorrow|in\s+2\s+days|two\s+days\s+from\s+now)\b/;
+const TOMORROW_RE = /\b(tomorrow|tmrw)\b/;
+
+const INDOOR_VENT_RE =
+  /\b(window|windows|ventilat\w*|cross-ventilat\w*|indoor\s*air|purifier|hepa|air\s*filter|open\s+(?:the\s+)?house)\b/;
+const CYCLING_RE = /\b(cycl\w*|bike|biking|bicycle|e-bike)\b/;
+const WALKING_RE = /\b(walk\w*|stroll\w*|hike|hiking)\b/;
+const COMMUTING_RE = /\b(commut\w*|office|workplace|metro|bus|rail|train|driving|traffic)\b/;
+const KIDS_OUTDOOR_RE = /\b(kid|kids|child|children|toddler|baby|infant|school|playground|recess)\b/;
+const GARDENING_RE = /\b(garden\w*|yard|lawn|balcony)\b/;
+const EXERCISE_RE =
+  /\b(jog\w*|running|run\s+outdoors?|exercis\w*|workout|sprint\w*|marathon|training|sport\w*)\b/;
+
+const ROUTINE_TRIGGER_RE =
+  /\b(when|best\s+time|time\s+slot|schedule|plan|window|windows|ventilat\w*|tomorrow|tonight|this\s+(?:morning|afternoon|evening)|outside|outdoors?|jog\w*|running|run\s+outdoors?|exercis\w*|workout|walk\w*|stroll\w*|hike|hiking|cycl\w*|bike|biking|bicycle|commut\w*|travel\w*|garden\w*|playground)\b/;
+const FAMILY_TRIGGER_RE =
+  /\b(family|household|kid|kids|child|children|toddler|baby|infant|elder\w*|senior\w*|older\s+adult\w*|parent\w*|grandparent\w*|pregnant|pregnancy|asthma\w*|copd|allerg\w*|breath\w*|lung\w*|respirat\w*|sensitiv\w*|vulnerab\w*|protect\w*|mask\w*|n95|kn95|purifier|hepa|indoor\s+air|at\s+home)\b/;
+const SUSTAINABILITY_TRIGGER_RE =
+  /\b(sustain\w*|emission\w*|carbon|co2e?|foot\s*print|reduce\b.*\b(?:pollution|contribut\w*|impact|car)|public\s+transit|metro|bus|rail|carpool\w*|electric\s+vehicle|\bev\b|waste|burn\w*|eco-?friendly|green\s+commut\w*)\b/;
 
 export function classifyUserIntent(query: string): {
   intent: string;
@@ -36,80 +58,57 @@ export function classifyUserIntent(query: string): {
   targetOffsetDays: number;
   agentsNeeded: AgentName[];
 } {
-  const q = query.toLowerCase();
-  const targetOffsetDays = q.includes('tomorrow') ? 1 : 0;
+  const q = query.toLowerCase().trim();
+
+  const targetOffsetDays = DAY_AFTER_TOMORROW_RE.test(q) ? 2 : TOMORROW_RE.test(q) ? 1 : 0;
 
   let activity: ActivityType = 'outdoor_exercise';
-  if (q.includes('window') || q.includes('ventilat') || q.includes('indoor')) {
+  if (INDOOR_VENT_RE.test(q)) {
     activity = 'indoor_ventilation';
-  } else if (q.includes('cycl') || q.includes('bike')) {
+  } else if (CYCLING_RE.test(q)) {
     activity = 'cycling';
-  } else if (q.includes('walk')) {
-    activity = 'walking';
-  } else if (q.includes('commut') || q.includes('travel') || q.includes('office')) {
-    activity = 'commuting';
-  } else if (q.includes('kid') || q.includes('child') || q.includes('school')) {
+  } else if (KIDS_OUTDOOR_RE.test(q) && /\b(play|outside|outdoor|school|playground|recess|park)\b/.test(q)) {
     activity = 'children_outdoor';
-  } else if (q.includes('garden')) {
+  } else if (WALKING_RE.test(q)) {
+    activity = 'walking';
+  } else if (COMMUTING_RE.test(q)) {
+    activity = 'commuting';
+  } else if (GARDENING_RE.test(q)) {
     activity = 'gardening';
+  } else if (EXERCISE_RE.test(q)) {
+    activity = 'outdoor_exercise';
   }
 
   const agentsNeeded: AgentName[] = ['Pollution Intelligence Agent'];
 
-  if (
-    q.includes('jog') ||
-    q.includes('run') ||
-    q.includes('exercis') ||
-    q.includes('when') ||
-    q.includes('window') ||
-    q.includes('tomorrow') ||
-    q.includes('outside') ||
-    q.includes('travel') ||
-    q.includes('walk') ||
-    q.includes('cycl')
-  ) {
+  if (ROUTINE_TRIGGER_RE.test(q)) {
     agentsNeeded.push('Smart Routine Agent');
   }
-
-  if (
-    q.includes('family') ||
-    q.includes('child') ||
-    q.includes('elder') ||
-    q.includes('parent') ||
-    q.includes('asthma') ||
-    q.includes('protect') ||
-    q.includes('sensitive') ||
-    q.includes('home') ||
-    q.includes('indoor')
-  ) {
+  if (FAMILY_TRIGGER_RE.test(q)) {
     agentsNeeded.push('Family Protection Agent');
   }
-
-  if (
-    q.includes('sustain') ||
-    q.includes('reduce') ||
-    q.includes('emission') ||
-    q.includes('transit') ||
-    q.includes('bus') ||
-    q.includes('metro') ||
-    q.includes('contribut') ||
-    q.includes('waste')
-  ) {
+  if (SUSTAINABILITY_TRIGGER_RE.test(q)) {
     agentsNeeded.push('Sustainability Agent');
   }
 
-  // Always include Family Protection if user hasn't hit any specialist other than Pollution Intelligence
-  if (agentsNeeded.length === 1) {
+  // Only invoke broad advisory defaults when the prompt does not clearly map to pollutant diagnostics
+  if (agentsNeeded.length === 1 && !DIAGNOSTIC_RE.test(q)) {
     agentsNeeded.push('Family Protection Agent', 'Smart Routine Agent');
   }
 
   agentsNeeded.push('Verification Agent');
 
-  const intent = agentsNeeded.includes('Smart Routine Agent')
-    ? 'activity_timing_and_exposure'
-    : agentsNeeded.includes('Sustainability Agent')
-      ? 'sustainability_and_emissions'
-      : 'air_quality_diagnosis';
+  const specialistCount = agentsNeeded.length - 2; // excluding Pollution Intelligence + Verification
+  let intent = 'air_quality_diagnosis';
+  if (specialistCount >= 2) {
+    intent = 'multi_domain_advisory';
+  } else if (agentsNeeded.includes('Smart Routine Agent')) {
+    intent = 'activity_timing_and_exposure';
+  } else if (agentsNeeded.includes('Family Protection Agent')) {
+    intent = 'family_and_indoor_protection';
+  } else if (agentsNeeded.includes('Sustainability Agent')) {
+    intent = 'sustainability_and_emissions';
+  }
 
   return { intent, activity, targetOffsetDays, agentsNeeded };
 }
@@ -128,24 +127,36 @@ function buildDeterministicFallbackExplanation(params: {
 
   if (!dataset) {
     return {
-      directAnswer: 'Live environmental data is currently unavailable, so I cannot provide verified air-quality guidance for this location.',
-      explanation: 'Open-Meteo air quality or weather data could not be retrieved. VAYU AI refuses to fabricate AQI readings or forecasts.',
-      recommendedActions: ['Retry fetching environmental data for your selected city before deciding on outdoor exertion.'],
+      directAnswer:
+        'Live environmental data is currently unavailable, so I cannot provide verified air-quality guidance for this location.',
+      explanation:
+        'Open-Meteo air quality or weather data could not be retrieved. VAYU AI refuses to fabricate AQI readings or forecasts.',
+      recommendedActions: [
+        'Retry fetching environmental data for your selected city before deciding on outdoor exertion.',
+      ],
       aiSynthesized: false,
       aiError,
     };
   }
 
-  const directParts = [pollution?.observations[0], routine?.recommendation ?? family?.recommendation].filter(Boolean);
+  const primaryObservation = pollution?.observations[0];
+  const primaryGuidance = routine?.recommendation ?? family?.recommendation ?? pollution?.recommendation;
+  const directParts = [primaryObservation, primaryGuidance].filter(Boolean);
   const explanationParts = agentResults.flatMap((a) => a.observations.slice(0, 2));
-  const actions = [routine?.recommendation, family?.recommendation, sustain?.recommendation].filter(
-    (v): v is string => Boolean(v),
-  );
+  const actions = [
+    routine?.recommendation,
+    family?.recommendation,
+    sustain?.recommendation,
+    pollution?.recommendation,
+  ].filter((v): v is string => Boolean(v));
 
   return {
     directAnswer: directParts.join(' '),
     explanation: explanationParts.join(' '),
-    recommendedActions: actions.length > 0 ? actions : ['Monitor local forecast updates before prolonged outdoor activity.'],
+    recommendedActions:
+      actions.length > 0
+        ? Array.from(new Set(actions)).slice(0, 4)
+        : ['Monitor local forecast updates before prolonged outdoor activity.'],
     aiSynthesized: false,
     aiError,
   };
@@ -158,11 +169,14 @@ export async function runVayuOrchestrator(params: {
   preferredScale: AqiScale;
   synthesizer?: AiSynthesizerFn;
 }): Promise<OrchestratorResponse> {
-  const { query, dataset, profiles, preferredScale, synthesizer } = params;
+  const { query, dataset, preferredScale, synthesizer } = params;
+  const profileCheck = validateHouseholdProfiles(params.profiles);
+  const profiles = profileCheck.valid ? profileCheck.profiles : [];
   const requestId = `vayu-${Date.now().toString(36)}`;
   const { intent, activity, targetOffsetDays, agentsNeeded } = classifyUserIntent(query);
 
   const specialistResults: AgentResult[] = [];
+  let routineWindows: RoutineWindow[] = [];
 
   if (agentsNeeded.includes('Pollution Intelligence Agent')) {
     specialistResults.push(runPollutionIntelligenceAgent(dataset, preferredScale));
@@ -180,12 +194,19 @@ export async function runVayuOrchestrator(params: {
       targetDate = base.toISOString().slice(0, 10);
     }
     const routineOut = runSmartRoutineAgent(dataset, activity, targetDate, preferredScale);
+    routineWindows = routineOut.windows;
     specialistResults.push(routineOut.agentResult);
   }
 
   if (agentsNeeded.includes('Sustainability Agent')) {
     specialistResults.push(runSustainabilityAgent(dataset, preferredScale));
   }
+
+  const deterministicFallback = buildDeterministicFallbackExplanation({
+    query,
+    dataset,
+    agentResults: specialistResults,
+  });
 
   // Call Gemini synthesizer (single grounded LLM call) if provided & dataset is present
   let synthesis: SynthesizedExplanation;
@@ -198,32 +219,33 @@ export async function runVayuOrchestrator(params: {
         preferredScale,
         agentResults: specialistResults,
         profiles,
+        routineWindows,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Gemini synthesis failed';
-      synthesis = buildDeterministicFallbackExplanation({
-        query,
-        dataset,
-        agentResults: specialistResults,
+      synthesis = {
+        ...deterministicFallback,
         aiError: msg,
-      });
+      };
     }
   } else {
-    synthesis = buildDeterministicFallbackExplanation({
-      query,
-      dataset,
-      agentResults: specialistResults,
-    });
+    synthesis = deterministicFallback;
   }
 
-  // Pass final output through Verification Agent
-  const draftText = `${synthesis.directAnswer} ${synthesis.explanation} ${synthesis.recommendedActions.join(' ')}`;
-  const { agentResult: verificationAgentResult, report: verificationReport } = runVerificationAgent({
-    dataset,
-    agentResults: specialistResults,
-    preferredScale,
-    draftAnswer: draftText,
-  });
+  // Verification Agent actively validates & corrects/rejects unsafe or ungrounded synthesis
+  const { enforcedSynthesis, verificationAgentResult, report: verificationReport } =
+    verifyAndEnforceSynthesis({
+      dataset,
+      agentResults: specialistResults,
+      preferredScale,
+      synthesis,
+      fallback: {
+        ...deterministicFallback,
+        aiSynthesized: synthesis.aiSynthesized,
+        aiError: synthesis.aiError,
+      },
+      routineWindows,
+    });
 
   const allAgentResults = [...specialistResults, verificationAgentResult];
 
@@ -243,20 +265,23 @@ export async function runVayuOrchestrator(params: {
     requestId,
     intent,
     query,
-    directAnswer: synthesis.directAnswer,
+    directAnswer: enforcedSynthesis.directAnswer,
     environmentalEvidence,
-    explanation: synthesis.explanation,
-    recommendedActions: synthesis.recommendedActions,
+    explanation: enforcedSynthesis.explanation,
+    recommendedActions: enforcedSynthesis.recommendedActions,
     limitationsAndUncertainty: limitations,
     dataSource: dataset
       ? `${dataset.modelSource} & ${dataset.weatherSource} (Modelled Grid Forecast)`
       : 'Unavailable',
     dataTimestamp: dataset?.currentTimestamp ?? 'Unavailable',
-    aqiScaleUsed: preferredScale === 'european_aqi' ? 'European Air Quality Index (EU EAQI)' : 'US EPA Air Quality Index (US AQI)',
+    aqiScaleUsed:
+      preferredScale === 'european_aqi'
+        ? 'European Air Quality Index (EU EAQI)'
+        : 'US EPA Air Quality Index (US AQI)',
     agentsInvolved: allAgentResults.map((a) => a.agent_name),
     agentResults: allAgentResults,
     verification: verificationReport,
-    aiSynthesized: synthesis.aiSynthesized,
-    aiError: synthesis.aiError,
+    aiSynthesized: enforcedSynthesis.aiSynthesized,
+    aiError: enforcedSynthesis.aiError,
   };
 }

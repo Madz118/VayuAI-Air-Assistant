@@ -25,31 +25,35 @@ type FocusPollutant = 'pm2_5' | 'pm10' | 'ozone' | 'nitrogen_dioxide';
 
 const POLLUTANT_META: Record<
   FocusPollutant,
-  { short: string; label: string; unit: string; who24h: number }
+  { short: string; label: string; unit: string; whoRef: number; periodShort: string }
 > = {
   pm2_5: {
     short: 'PM2.5',
     label: 'PM2.5 (µg/m³)',
     unit: 'µg/m³',
-    who24h: CONFIG_POLLUTANT_META.pm2_5.who24hGuideline,
+    whoRef: CONFIG_POLLUTANT_META.pm2_5.whoGuideline,
+    periodShort: CONFIG_POLLUTANT_META.pm2_5.guidelinePeriodShort,
   },
   pm10: {
     short: 'PM10',
     label: 'PM10 (µg/m³)',
     unit: 'µg/m³',
-    who24h: CONFIG_POLLUTANT_META.pm10.who24hGuideline,
+    whoRef: CONFIG_POLLUTANT_META.pm10.whoGuideline,
+    periodShort: CONFIG_POLLUTANT_META.pm10.guidelinePeriodShort,
   },
   ozone: {
     short: 'O₃',
     label: 'Ozone O₃ (µg/m³)',
     unit: 'µg/m³',
-    who24h: CONFIG_POLLUTANT_META.ozone.who24hGuideline,
+    whoRef: CONFIG_POLLUTANT_META.ozone.whoGuideline,
+    periodShort: CONFIG_POLLUTANT_META.ozone.guidelinePeriodShort,
   },
   nitrogen_dioxide: {
     short: 'NO₂',
     label: 'Nitrogen Dioxide NO₂ (µg/m³)',
     unit: 'µg/m³',
-    who24h: CONFIG_POLLUTANT_META.nitrogen_dioxide.who24hGuideline,
+    whoRef: CONFIG_POLLUTANT_META.nitrogen_dioxide.whoGuideline,
+    periodShort: CONFIG_POLLUTANT_META.nitrogen_dioxide.guidelinePeriodShort,
   },
 };
 
@@ -245,7 +249,7 @@ export const PollutantCharts: React.FC<PollutantChartsProps> = ({ dataset, prefe
               36h Forecast Breakdown
             </h3>
             <p className="text-xs text-[#9BB0C0] mt-1">
-              Left axis: {scaleTitle} · Right axis: {focusMeta.label} (WHO 24h ref: {focusMeta.who24h})
+              Left axis: {scaleTitle} · Right axis: {focusMeta.label} (WHO {focusMeta.periodShort} ref: {focusMeta.whoRef})
             </p>
           </div>
 
@@ -316,12 +320,12 @@ export const PollutantCharts: React.FC<PollutantChartsProps> = ({ dataset, prefe
                   />
                   <ReferenceLine
                     yAxisId="conc"
-                    y={focusMeta.who24h}
+                    y={focusMeta.whoRef}
                     stroke="#F59E0B"
                     strokeDasharray="4 4"
                     strokeOpacity={0.75}
                     label={{
-                      value: `WHO 24h (${focusMeta.who24h})`,
+                      value: `WHO ${focusMeta.periodShort} (${focusMeta.whoRef})`,
                       position: 'insideTopRight',
                       fill: '#FCD34D',
                       fontSize: 10,

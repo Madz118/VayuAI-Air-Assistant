@@ -50,19 +50,43 @@ export const CommunityPage: React.FC = () => {
 
   // Community observations state
   const [reports, setReports] = useState<CommunityReport[]>([]);
+  const [persistenceNote, setPersistenceNote] = useState<string>('');
+  const [authorTokens, setAuthorTokens] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('vayu_community_author_tokens_v1');
+      return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    } catch {
+      return {};
+    }
+  });
   const [loadingReports, setLoadingReports] = useState(false);
   const [category, setCategory] = useState<ObservationCategory>('traffic_exhaust');
   const [description, setDescription] = useState('');
   const [consentGiven, setConsentGiven] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const saveAuthorTokens = (next: Record<string, string>) => {
+    setAuthorTokens(next);
+    try {
+      localStorage.setItem('vayu_community_author_tokens_v1', JSON.stringify(next));
+    } catch {
+      // Ignore storage quota errors
+    }
+  };
 
   const fetchReports = async () => {
     setLoadingReports(true);
     try {
       const res = await fetch('/api/community');
       const json = await res.json();
-      if (res.ok) setReports(json.reports ?? []);
+      if (res.ok) {
+        setReports(json.reports ?? []);
+        if (typeof json.persistenceNote === 'string') {
+          setPersistenceNote(json.persistenceNote);
+        }
+      }
     } finally {
       setLoadingReports(false);
     }
@@ -75,6 +99,7 @@ export const CommunityPage: React.FC = () => {
   const handleSubmitObservation = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
+    setActionMessage(null);
     if (!consentGiven) {
       setSubmitError('Please confirm consent to record your selected city coordinates and observation.');
       return;
@@ -102,6 +127,9 @@ export const CommunityPage: React.FC = () => {
       if (!res.ok) {
         throw new Error(json.error || 'Submission failed.');
       }
+      if (json.report?.id && typeof json.authorToken === 'string') {
+        saveAuthorTokens({ ...authorTokens, [json.report.id]: json.authorToken });
+      }
       setDescription('');
       setConsentGiven(false);
       await fetchReports();
@@ -113,16 +141,37 @@ export const CommunityPage: React.FC = () => {
   };
 
   const handleFlag = async (id: string) => {
-    await fetch(`/api/community/${encodeURIComponent(id)}/flag`, {
+    setActionMessage(null);
+    const res = await fetch(`/api/community/${encodeURIComponent(id)}/flag`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason: 'Flagged for moderation review' }),
     });
+    const json = await res.json();
+    if (!res.ok) {
+      setActionMessage(json.error || 'Unable to flag observation.');
+      return;
+    }
     await fetchReports();
   };
 
   const handleDelete = async (id: string) => {
-    await fetch(`/api/community/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    setActionMessage(null);
+    const token = authorTokens[id];
+    const res = await fetch(`/api/community/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: token ? { 'X-Report-Token': token } : {},
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      setActionMessage(json.error || 'Unable to delete observation.');
+      return;
+    }
+    if (token) {
+      const next = { ...authorTokens };
+      delete next[id];
+      saveAuthorTokens(next);
+    }
     await fetchReports();
   };
 
@@ -348,10 +397,20 @@ export const CommunityPage: React.FC = () => {
         <div id="panel-community" role="tabpanel" aria-labelledby="tab-community" className="space-y-6">
           <div className="rounded-xl border border-amber-400/25 bg-[#0B1928]/95 px-4 py-3 flex items-start gap-3">
             <Info className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" aria-hidden="true" />
-            <p className="text-xs text-[#9BB0C0] leading-relaxed">
-              <strong className="text-[#F2F7FA]">Unverified Community Reports:</strong> Submissions below reflect local visual/sensory observations shared by users and are <strong className="text-[#F2F7FA]">never</strong> presented as calibrated scientific sensor readings.
-            </p>
+            <div className="text-xs text-[#9BB0C0] leading-relaxed space-y-1">
+              <p>
+                <strong className="text-[#F2F7FA]">Unverified Community Reports:</strong> Submissions below reflect local visual/sensory observations shared by users and are <strong className="text-[#F2F7FA]">never</strong> presented as calibrated scientific sensor readings.
+              </p>
+              {persistenceNote && <p>{persistenceNote}</p>}
+            </div>
           </div>
+
+          {actionMessage && (
+            <div role="alert" className="rounded-xl border border-amber-400/35 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>{actionMessage}</span>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Submission Form */}
@@ -489,12 +548,12 @@ export const CommunityPage: React.FC = () => {
                           >
                             <Flag className="w-3.5 h-3.5" />
                           </button>
-                          {!rep.isDemonstration && (
+                          {!rep.isDemonstration && Boolean(authorTokens[rep.id]) && (
                             <button
                               type="button"
                               onClick={() => handleDelete(rep.id)}
-                              aria-label={`Remove observation in ${rep.cityName}`}
-                              title="Remove observation"
+                              aria-label={`Remove your observation in ${rep.cityName}`}
+                              title="Remove your observation"
                               className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-[#B5C7D4] hover:bg-red-500/10 hover:text-red-300"
                             >
                               <Trash2 className="w-3.5 h-3.5" />

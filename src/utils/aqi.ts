@@ -203,13 +203,17 @@ export function buildPollutantBreakdown(point: Partial<HourlyAirQualityPoint>): 
     const raw = point[key];
     const value = typeof raw === 'number' && Number.isFinite(raw) ? Math.round(raw * 10) / 10 : null;
     const whoRatio =
-      value !== null && meta.who24hGuideline ? Math.round((value / meta.who24hGuideline) * 100) / 100 : null;
+      value !== null && meta.whoGuideline ? Math.round((value / meta.whoGuideline) * 100) / 100 : null;
 
     let statusLabel = 'Data unavailable';
     if (whoRatio !== null) {
-      if (whoRatio <= 1) statusLabel = 'Within WHO reference';
-      else if (whoRatio <= 2) statusLabel = `${whoRatio.toFixed(1)}× WHO reference`;
-      else statusLabel = `Elevated (${whoRatio.toFixed(1)}× WHO)`;
+      if (whoRatio <= 1) {
+        statusLabel = `1h below ${meta.guidelinePeriodShort} ref`;
+      } else if (whoRatio <= 2) {
+        statusLabel = `1h level ${whoRatio.toFixed(1)}× ${meta.guidelinePeriodShort} ref`;
+      } else {
+        statusLabel = `High 1h spike (${whoRatio.toFixed(1)}× ${meta.guidelinePeriodShort} ref)`;
+      }
     }
 
     return {
@@ -218,7 +222,9 @@ export function buildPollutantBreakdown(point: Partial<HourlyAirQualityPoint>): 
       name: meta.name,
       value,
       unit: meta.unit,
-      who24hGuideline: meta.who24hGuideline,
+      whoGuideline: meta.whoGuideline,
+      guidelinePeriod: meta.guidelinePeriod,
+      guidelinePeriodShort: meta.guidelinePeriodShort,
       whoRatio,
       statusLabel,
       healthNote: meta.healthNote,
@@ -227,7 +233,9 @@ export function buildPollutantBreakdown(point: Partial<HourlyAirQualityPoint>): 
 }
 
 /**
- * Determines dominant pollutant objectively by comparing each concentration against WHO 2021 guideline ratios.
+ * Determines dominant pollutant objectively by computing a single-hour screening ratio
+ * against WHO 2021 24-hour (or 8-hour for O3) guideline reference values.
+ * Screening ratios indicate relative dominance, not formal multi-hour guideline exceedances.
  */
 export function identifyDominantPollutant(point: Partial<HourlyAirQualityPoint>): {
   key: string;
@@ -257,7 +265,7 @@ export function identifyDominantPollutant(point: Partial<HourlyAirQualityPoint>)
     name: top.name,
     value: top.value,
     unit: top.unit,
-    rationale: `${top.symbol} is ${top.value} ${top.unit}, representing ${top.whoRatio?.toFixed(2)}× the WHO reference threshold (${top.who24hGuideline} ${top.unit}).`,
+    rationale: `${top.symbol} 1-hour modelled concentration is ${top.value} ${top.unit} (${top.whoRatio?.toFixed(2)}× the WHO ${top.guidelinePeriod} screening reference of ${top.whoGuideline} ${top.unit}; single-hour screening comparison, not a formal ${top.guidelinePeriod} exceedance).`,
   };
 }
 

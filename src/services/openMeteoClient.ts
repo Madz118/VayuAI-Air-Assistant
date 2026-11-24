@@ -20,9 +20,32 @@ interface CacheEntry<T> {
 
 const AQ_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const GEO_CACHE_TTL_MS = 60 * 60 * 1000; // 60 minutes
+const MAX_CACHE_ENTRIES = 200;
 
 const aqCache = new Map<string, CacheEntry<EnvironmentalDataset>>();
 const geoCache = new Map<string, CacheEntry<CityLocation[]>>();
+
+function setBoundedCache<T>(map: Map<string, CacheEntry<T>>, key: string, entry: CacheEntry<T>) {
+  const now = Date.now();
+  if (map.size >= MAX_CACHE_ENTRIES) {
+    for (const [k, v] of map.entries()) {
+      if (v.expiresAt <= now) {
+        map.delete(k);
+      }
+    }
+    while (map.size >= MAX_CACHE_ENTRIES) {
+      const oldestKey = map.keys().next().value;
+      if (oldestKey === undefined) break;
+      map.delete(oldestKey);
+    }
+  }
+  map.set(key, entry);
+}
+
+export function clearOpenMeteoCaches(): void {
+  aqCache.clear();
+  geoCache.clear();
+}
 
 function numAt(arr: unknown, idx: number): number | null {
   if (!Array.isArray(arr)) return null;
@@ -47,9 +70,10 @@ export function normalizeOpenMeteoPayloads(params: {
   location: CityLocation;
   aqPayload: Record<string, unknown>;
   weatherPayload: Record<string, unknown>;
+  weatherAvailable?: boolean;
   nowMs?: number;
 }): EnvironmentalDataset {
-  const { location, aqPayload, weatherPayload, nowMs = Date.now() } = params;
+  const { location, aqPayload, weatherPayload, weatherAvailable = true, nowMs = Date.now() } = params;
   const validation = validateOpenMeteoAirQualityPayload(aqPayload);
   if (!validation.valid) {
     throw new Error(validation.error ?? 'Invalid Open-Meteo Air Quality payload.');
@@ -61,7 +85,6 @@ export function normalizeOpenMeteoPayloads(params: {
   const times = aqHourly.time as string[];
   const weatherTimes = Array.isArray(weatherHourly.time) ? (weatherHourly.time as string[]) : [];
 
-  // Map weather hourly by time string for exact alignment
   const weatherByTime = new Map<
     string,
     {
@@ -115,11 +138,10 @@ export function normalizeOpenMeteoPayloads(params: {
     };
   });
 
-  // Determine current index using weatherPayload.current.time or UTC offset
   const utcOffsetSec =
-    typeof aqPayload.utc_offset_seconds === 'number'
+    typeof aqPayload.utc_offset_seconds === 'number' && Number.isFinite(aqPayload.utc_offset_seconds)
       ? aqPayload.utc_offset_seconds
-      : typeof weatherPayload?.utc_offset_seconds === 'number'
+      : typeof weatherPayload?.utc_offset_seconds === 'number' && Number.isFinite(weatherPayload.utc_offset_seconds)
         ? (weatherPayload.utc_offset_seconds as number)
         : 0;
 
@@ -130,22 +152,20 @@ export function normalizeOpenMeteoPayloads(params: {
     currentIdx = hourly.findIndex((h) => h.time === currentHourPrefix);
   }
   if (currentIdx === -1) {
-    // Fallback to nearest non-null entry around midpoint (since past_days=1 gives ~24h past)
     currentIdx = Math.min(24, Math.max(0, hourly.length - 1));
   }
 
   const currentPoint = hourly[currentIdx];
   const { completenessRatio, missingFields } = evaluatePointCompleteness(currentPoint);
 
-  // Convert local timestamp back to UTC ISO for freshness check
   const localTimestampMs = Date.parse(`${currentPoint.time}:00Z`);
   const adjustedUtcIso = Number.isFinite(localTimestampMs)
     ? new Date(localTimestampMs - utcOffsetSec * 1000).toISOString()
-    : new Date(nowMs).toISOString();
+    : '';
 
   const freshness = checkTimestampFreshness(adjustedUtcIso, nowMs);
   const weatherCode =
-    typeof weatherCurrent.weather_code === 'number'
+    typeof weatherCurrent.weather_code === 'number' && Number.isFinite(weatherCurrent.weather_code)
       ? weatherCurrent.weather_code
       : currentPoint.weather_code ?? null;
 
@@ -159,19 +179,19 @@ export function normalizeOpenMeteoPayloads(params: {
     sulphur_dioxide: currentPoint.sulphur_dioxide,
     carbon_monoxide: currentPoint.carbon_monoxide,
     temperature_2m:
-      typeof weatherCurrent.temperature_2m === 'number'
+      typeof weatherCurrent.temperature_2m === 'number' && Number.isFinite(weatherCurrent.temperature_2m)
         ? weatherCurrent.temperature_2m
         : currentPoint.temperature_2m ?? null,
     relative_humidity_2m:
-      typeof weatherCurrent.relative_humidity_2m === 'number'
+      typeof weatherCurrent.relative_humidity_2m === 'number' && Number.isFinite(weatherCurrent.relative_humidity_2m)
         ? weatherCurrent.relative_humidity_2m
         : currentPoint.relative_humidity_2m ?? null,
     wind_speed_10m:
-      typeof weatherCurrent.wind_speed_10m === 'number'
+      typeof weatherCurrent.wind_speed_10m === 'number' && Number.isFinite(weatherCurrent.wind_speed_10m)
         ? weatherCurrent.wind_speed_10m
         : currentPoint.wind_speed_10m ?? null,
     wind_direction_10m:
-      typeof weatherCurrent.wind_direction_10m === 'number'
+      typeof weatherCurrent.wind_direction_10m === 'number' && Number.isFinite(weatherCurrent.wind_direction_10m)
         ? weatherCurrent.wind_direction_10m
         : currentPoint.wind_direction_10m ?? null,
     weather_code: weatherCode,
@@ -179,6 +199,9 @@ export function normalizeOpenMeteoPayloads(params: {
   };
 
   const dominantPollutant = identifyDominantPollutant(currentPoint);
+  const weatherHasCore =
+    weatherAvailable &&
+    (current.temperature_2m !== null || current.wind_speed_10m !== null || current.relative_humidity_2m !== null);
 
   return {
     location: {
@@ -189,6 +212,7 @@ export function normalizeOpenMeteoPayloads(params: {
     currentTimestamp: currentPoint.time,
     modelSource: 'Open-Meteo Air Quality API (CAMS Atmospheric Forecast)',
     weatherSource: 'Open-Meteo Weather Forecast API',
+    weatherAvailable: weatherHasCore,
     isModelledForecast: true,
     dataAgeMinutes: freshness.ageMinutes,
     isStale: freshness.isStale,
@@ -220,8 +244,8 @@ export async function fetchEnvironmentalDataset(locationInput?: Partial<CityLoca
       location: {
         ...cached.data.location,
         name: locationInput?.name || cached.data.location.name,
-        country: locationInput?.country || cached.data.location.country,
-        region: locationInput?.region || cached.data.location.region,
+        country: locationInput?.country ?? cached.data.location.country,
+        region: locationInput?.region ?? cached.data.location.region,
       },
       cached: true,
     };
@@ -262,28 +286,45 @@ export async function fetchEnvironmentalDataset(locationInput?: Partial<CityLoca
   weatherUrl.searchParams.set('forecast_days', '3');
   weatherUrl.searchParams.set('timezone', 'auto');
 
-  const [aqRes, weatherRes] = await Promise.all([
+  const [aqSettled, weatherSettled] = await Promise.allSettled([
     fetchWithTimeout(aqUrl.toString()),
     fetchWithTimeout(weatherUrl.toString()),
   ]);
 
+  if (aqSettled.status === 'rejected') {
+    throw new Error('Unable to reach Open-Meteo Air Quality API within timeout.');
+  }
+  const aqRes = aqSettled.value;
   if (!aqRes.ok) {
     throw new Error(`Open-Meteo Air Quality API returned HTTP ${aqRes.status}.`);
   }
 
-  const aqJson = (await aqRes.json()) as Record<string, unknown>;
+  let aqJson: Record<string, unknown>;
+  try {
+    aqJson = (await aqRes.json()) as Record<string, unknown>;
+  } catch {
+    throw new Error('Open-Meteo Air Quality API returned malformed JSON.');
+  }
+
   let weatherJson: Record<string, unknown> = {};
-  if (weatherRes.ok) {
-    weatherJson = (await weatherRes.json()) as Record<string, unknown>;
+  let weatherAvailable = false;
+  if (weatherSettled.status === 'fulfilled' && weatherSettled.value.ok) {
+    try {
+      weatherJson = (await weatherSettled.value.json()) as Record<string, unknown>;
+      weatherAvailable = weatherJson.error !== true;
+    } catch {
+      weatherAvailable = false;
+    }
   }
 
   const dataset = normalizeOpenMeteoPayloads({
     location,
     aqPayload: aqJson,
     weatherPayload: weatherJson,
+    weatherAvailable,
   });
 
-  aqCache.set(cacheKey, {
+  setBoundedCache(aqCache, cacheKey, {
     expiresAt: Date.now() + AQ_CACHE_TTL_MS,
     data: dataset,
   });
@@ -314,7 +355,7 @@ export async function fetchLocalForecastGrid(lat: number, lon: number): Promise<
     { label: 'West Grid (-0.15°)', dLat: 0, dLon: -0.15 },
   ];
 
-  const results = await Promise.all(
+  const settled = await Promise.allSettled(
     offsets.map(async (off) => {
       const pLat = Math.max(-89, Math.min(89, Math.round((coords.latitude! + off.dLat) * 1000) / 1000));
       const pLon = Math.max(-179, Math.min(179, Math.round((coords.longitude! + off.dLon) * 1000) / 1000));
@@ -335,7 +376,27 @@ export async function fetchLocalForecastGrid(lat: number, lon: number): Promise<
     }),
   );
 
-  return results;
+  const fulfilled = settled
+    .filter(
+      (
+        r,
+      ): r is PromiseFulfilledResult<{
+        label: string;
+        latitude: number;
+        longitude: number;
+        us_aqi: number | null;
+        european_aqi: number | null;
+        pm2_5: number | null;
+        timestamp: string;
+      }> => r.status === 'fulfilled',
+    )
+    .map((r) => r.value);
+
+  if (fulfilled.length === 0) {
+    throw new Error('All surrounding Open-Meteo grid lookups failed.');
+  }
+
+  return fulfilled;
 }
 
 export async function searchCities(query: string): Promise<CityLocation[]> {
@@ -356,9 +417,18 @@ export async function searchCities(query: string): Promise<CityLocation[]> {
   url.searchParams.set('language', 'en');
   url.searchParams.set('format', 'json');
 
-  const res = await fetchWithTimeout(url.toString(), 8000);
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(url.toString(), 8000);
+  } catch {
+    const localMatches = PRESET_CITIES.filter((c) =>
+      `${c.name} ${c.country} ${c.region ?? ''}`.toLowerCase().includes(key),
+    );
+    if (localMatches.length > 0) return localMatches;
+    throw new Error('Geocoding service timed out.');
+  }
+
   if (!res.ok) {
-    // Fallback to filtering curated cities if geocoding upstream returns error
     const localMatches = PRESET_CITIES.filter((c) =>
       `${c.name} ${c.country} ${c.region ?? ''}`.toLowerCase().includes(key),
     );
@@ -388,7 +458,7 @@ export async function searchCities(query: string): Promise<CityLocation[]> {
     timezone: r.timezone,
   }));
 
-  geoCache.set(key, {
+  setBoundedCache(geoCache, key, {
     expiresAt: Date.now() + GEO_CACHE_TTL_MS,
     data: results,
   });

@@ -6,6 +6,10 @@ import type {
   HouseholdProfile,
 } from '../types/airQuality.ts';
 
+function sanitizeDisplayLabel(label: string): string {
+  return label.replace(/[<>{}`\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40) || 'Household member';
+}
+
 export function runFamilyProtectionAgent(
   dataset: EnvironmentalDataset | null,
   profiles: HouseholdProfile[],
@@ -20,7 +24,10 @@ export function runFamilyProtectionAgent(
       evidence: [],
       data_timestamp: 'Unavailable',
       confidence: 'low',
-      limitations: ['Missing environmental dataset. Guidance excludes medical diagnosis or treatment.'],
+      limitations: [
+        'Missing environmental dataset. Guidance excludes medical diagnosis or treatment.',
+        'Household profiles remain in local browser storage; when using Ask VAYU AI, only anonymized age/exposure groups and sensitivity flags (never names or personal notes) are transmitted to Gemini.',
+      ],
     };
   }
 
@@ -30,6 +37,8 @@ export function runFamilyProtectionAgent(
   const hasOlderAdults = profiles.some((p) => p.group === 'older_adult');
   const sensitiveMembers = profiles.filter((p) => p.hasRespiratorySensitivity);
   const hasSensitiveGroup = hasChildren || hasOlderAdults || sensitiveMembers.length > 0;
+  const degradedConfidence =
+    cat.level === 'unknown' || dataset.isStale || dataset.completenessRatio < 0.6;
 
   const observations: string[] = [];
   if (profiles.length === 0) {
@@ -37,13 +46,29 @@ export function runFamilyProtectionAgent(
   } else {
     observations.push(
       `Evaluating exposure for ${profiles.length} household profile(s): ${profiles
-        .map((p) => `${p.label} (${p.group.replace('_', ' ')}${p.hasRespiratorySensitivity ? ', respiratory sensitivity' : ''})`)
+        .map(
+          (p) =>
+            `${sanitizeDisplayLabel(p.label)} (${p.group.replace('_', ' ')}${p.hasRespiratorySensitivity ? ', respiratory sensitivity' : ''})`,
+        )
         .join('; ')}.`,
     );
   }
 
   const actions: string[] = [];
-  if (cat.level === 'good') {
+  if (cat.level === 'unknown') {
+    observations.push('Current AQI is unavailable; err on the side of caution for vulnerable household members.');
+    actions.push('Check local visibility and retry data fetch before extended outdoor exposure for children, older adults, or sensitive airways.');
+  } else if (degradedConfidence) {
+    observations.push(
+      `Modelled ${cat.label} reads ${cat.value ?? 'N/A'} (${cat.shortLabel}), but the dataset is ${dataset.isStale ? 'stale' : 'incomplete'} (${Math.round(dataset.completenessRatio * 100)}% fields present).`,
+    );
+    actions.push(
+      'Refresh environmental readings before approving prolonged outdoor activity for children, older adults, or anyone with respiratory sensitivity.',
+    );
+    if (cat.level !== 'good') {
+      actions.push('Favor lower-traffic areas, keep windows facing busy roads closed if haze is visible, and keep personal reliever plans accessible.');
+    }
+  } else if (cat.level === 'good') {
     observations.push(`Modelled ${cat.label} (${cat.value}) indicates low ambient particle and gas stress.`);
     actions.push('Normal outdoor play and errands are appropriate.');
     if (sensitiveMembers.length > 0) {
@@ -68,14 +93,11 @@ export function runFamilyProtectionAgent(
     if (sensitiveMembers.length > 0) {
       actions.push('Consider well-fitted particulate respirators (e.g., N95/KN95 for adults where tolerated) for unavoidable high-traffic commutes.');
     }
-  } else if (cat.level === 'unhealthy' || cat.level === 'very_unhealthy' || cat.level === 'hazardous') {
+  } else {
     observations.push(`Modelled ${cat.label} (${cat.value}) indicates elevated exposure risk across all household groups.`);
     actions.push('Shift children’s play, older adults’ walks, and exercise indoors.');
     actions.push('Seal exterior drafts, run indoor air purifiers on medium/high, and use kitchen exhaust ventilation when cooking.');
     actions.push('Limit outdoor trips to essential errands away from rush-hour corridors.');
-  } else {
-    observations.push('Current AQI is unavailable; err on the side of caution for vulnerable household members.');
-    actions.push('Check local visibility and retry data fetch before extended outdoor exposure.');
   }
 
   const evidence: string[] = [
@@ -86,15 +108,15 @@ export function runFamilyProtectionAgent(
 
   return {
     agent_name: 'Family Protection Agent',
-    status: cat.level === 'unknown' ? 'partial' : 'completed',
+    status: degradedConfidence ? 'partial' : 'completed',
     observations,
     recommendation: actions.join(' '),
     evidence,
     data_timestamp: dataset.currentTimestamp,
-    confidence: cat.level === 'unknown' ? 'low' : dataset.isStale ? 'low' : 'high',
+    confidence: degradedConfidence ? 'low' : 'high',
     limitations: [
       'Environmental precautions only — VAYU AI does not provide medical diagnosis, clinical assessment, or treatment advice. Consult a qualified clinician for respiratory symptoms.',
-      'Household profiles remain private in local browser storage and are never persisted on external servers.',
+      'Full household names and optional notes stay in local browser storage and are never stored on remote servers; when asking VAYU AI, only anonymized age/exposure groups and respiratory sensitivity booleans are sent to Gemini.',
     ],
   };
 }

@@ -60,7 +60,9 @@ export interface PollutantMetric {
   name: string;
   value: number | null;
   unit: string;
-  who24hGuideline: number | null;
+  whoGuideline: number | null;
+  guidelinePeriod: '24-hour mean' | '8-hour daily max mean';
+  guidelinePeriodShort: '24h mean' | '8h max';
   whoRatio: number | null;
   statusLabel: string;
   healthNote: string;
@@ -72,6 +74,7 @@ export interface EnvironmentalDataset {
   currentTimestamp: string;
   modelSource: string;
   weatherSource: string;
+  weatherAvailable?: boolean;
   isModelledForecast: true;
   dataAgeMinutes: number;
   isStale: boolean;
@@ -136,6 +139,7 @@ export interface VerificationReport {
   }>;
   warnings: string[];
   rejectedClaims: string[];
+  correctionApplied?: boolean;
 }
 
 export interface OrchestratorResponse {

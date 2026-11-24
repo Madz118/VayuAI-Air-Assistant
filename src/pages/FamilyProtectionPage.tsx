@@ -89,7 +89,7 @@ export const FamilyProtectionPage: React.FC = () => {
       <div className="rounded-xl border border-[#49E3D0]/25 bg-[#0B1928]/95 px-4 py-3 flex items-start gap-3">
         <Lock className="w-4 h-4 text-[#49E3D0] shrink-0 mt-0.5" aria-hidden="true" />
         <p className="text-xs text-[#9BB0C0] leading-relaxed">
-          <strong className="text-[#F2F7FA]">Local Privacy Guarantee:</strong> Household profiles are stored strictly in your browser’s local storage and are never persisted in any remote database. VAYU AI provides environmental exposure guidance only—never medical diagnosis or treatment.
+          <strong className="text-[#F2F7FA]">Privacy & Gemini Data Disclosure:</strong> Full household profiles (names/labels and optional sensitivity notes) are stored strictly in your browser’s local storage and are never persisted in any remote database. When you submit a question on <em>Ask VAYU AI</em>, <strong className="text-[#F2F7FA]">only anonymized exposure categories</strong> (each member’s age group: adult/child/older adult and respiratory sensitivity boolean) are sent to the server and Gemini API—personal names and notes stay in your browser. VAYU AI provides environmental precautions only, never medical diagnosis or treatment.
         </p>
       </div>
 

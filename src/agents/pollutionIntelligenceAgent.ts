@@ -26,13 +26,14 @@ export function runPollutionIntelligenceAgent(
   const cat = interpretAqiCategory(primaryAqi, preferredScale);
   const dominant = identifyDominantPollutant(dataset.current);
   const pollutants = buildPollutantBreakdown(dataset.current);
+  const scaleName = preferredScale === 'european_aqi' ? 'EU EAQI' : 'US AQI';
 
   const observations: string[] = [
     `Current modelled ${cat.label} is ${cat.value ?? 'unavailable'} (${cat.shortLabel}) at ${dataset.location.name}, ${dataset.location.country}.`,
-    `Dominant pollutant relative to WHO guidelines: ${dominant.symbol} (${dominant.rationale})`,
+    `Dominant pollutant (1h screening ratio vs WHO reference): ${dominant.symbol} (${dominant.rationale})`,
   ];
 
-  // Analyze 24h forecast trend vs current
+  // Analyze 12h forecast trend vs current
   const nowIdx = dataset.hourly.findIndex((h) => h.time === dataset.currentTimestamp);
   const startIdx = nowIdx >= 0 ? nowIdx : 0;
   const next12h = dataset.hourly.slice(startIdx + 1, startIdx + 13);
@@ -45,9 +46,10 @@ export function runPollutionIntelligenceAgent(
     const maxNext = Math.max(...validNextAqi);
     const minNext = Math.min(...validNextAqi);
     const delta = avgNext - primaryAqi;
-    const trendLabel = delta > 8 ? 'worsening' : delta < -8 ? 'improving' : 'relatively steady';
+    const threshold = preferredScale === 'european_aqi' ? 4 : 8;
+    const trendLabel = delta > threshold ? 'worsening' : delta < -threshold ? 'improving' : 'relatively steady';
     observations.push(
-      `Next 12-hour forecast appears ${trendLabel} (average ${avgNext}, range ${minNext}–${maxNext} on ${preferredScale === 'european_aqi' ? 'EU EAQI' : 'US AQI'}).`,
+      `Next 12-hour forecast appears ${trendLabel} (average ${avgNext}, range ${minNext}–${maxNext} on ${scaleName}).`,
     );
   }
 
@@ -75,6 +77,7 @@ export function runPollutionIntelligenceAgent(
 
   const limitations: string[] = [
     'Open-Meteo CAMS provides modelled grid forecasts (~10–40 km resolution) and does not reflect hyper-local roadside spikes or physical CPCB/EPA monitoring station measurements.',
+    'Single-hour pollutant ratios against WHO 24-hour or 8-hour guideline values are screening comparisons only, not formal multi-hour guideline exceedances.',
   ];
   if (dataset.isStale) {
     limitations.push(`Data timestamp is ${dataset.dataAgeMinutes} minutes old and flagged as stale.`);
@@ -82,26 +85,35 @@ export function runPollutionIntelligenceAgent(
   if (dataset.missingFields.length > 0) {
     limitations.push(`Missing fields for current timestamp: ${dataset.missingFields.join(', ')}.`);
   }
+  if (dataset.weatherAvailable === false) {
+    limitations.push('Upstream meteorology fields could not be retrieved; weather dispersion context is unavailable.');
+  }
 
-  const confidence =
-    dataset.isStale || dataset.completenessRatio < 0.6
-      ? 'low'
-      : dataset.completenessRatio < 0.9
-        ? 'moderate'
-        : 'high';
+  const degradedConfidence =
+    cat.level === 'unknown' || dataset.isStale || dataset.completenessRatio < 0.6;
 
-  let recommendation = `Current modelled air quality is ${cat.shortLabel}. `;
-  if (cat.level === 'good') {
-    recommendation += 'Conditions are broadly favorable for normal outdoor activities while monitoring local traffic corridors.';
+  const confidence = degradedConfidence
+    ? 'low'
+    : dataset.completenessRatio < 0.9
+      ? 'moderate'
+      : 'high';
+
+  let recommendation = '';
+  if (cat.level === 'unknown') {
+    recommendation = `Current ${scaleName} reading is unavailable; avoid assuming conditions are clean and refresh data before prolonged outdoor exertion.`;
+  } else if (dataset.isStale || dataset.completenessRatio < 0.6) {
+    recommendation = `Available modelled ${cat.label} reads ${cat.value} (${cat.shortLabel}), but data is ${dataset.isStale ? 'stale' : 'incomplete'} (${Math.round(dataset.completenessRatio * 100)}% complete). Do not rely on this reading for confident outdoor planning until refreshed.`;
+  } else if (cat.level === 'good') {
+    recommendation = `Current modelled air quality is ${cat.shortLabel}. Conditions are broadly favorable for normal outdoor activities while monitoring local traffic corridors.`;
   } else if (cat.level === 'moderate') {
-    recommendation += `Monitor ${dominant.symbol} levels; unusually sensitive individuals should pace prolonged vigorous exertion.`;
+    recommendation = `Current modelled air quality is ${cat.shortLabel}. Monitor ${dominant.symbol} levels; unusually sensitive individuals should pace prolonged vigorous exertion.`;
   } else {
-    recommendation += `Elevated ${dominant.symbol} suggests shortening intense outdoor exertion and favoring filtered indoor spaces.`;
+    recommendation = `Current modelled air quality is ${cat.shortLabel}. Elevated ${dominant.symbol} suggests shortening intense outdoor exertion and favoring filtered indoor spaces.`;
   }
 
   return {
     agent_name: 'Pollution Intelligence Agent',
-    status: dataset.missingFields.length > 0 ? 'partial' : 'completed',
+    status: degradedConfidence || dataset.missingFields.length > 0 ? 'partial' : 'completed',
     observations,
     recommendation,
     evidence,

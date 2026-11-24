@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { runSmartRoutineAgent } from './src/agents/smartRoutineAgent.ts';
@@ -10,6 +10,7 @@ import {
   addCommunityReport,
   deleteCommunityReport,
   flagCommunityReport,
+  getCommunityStorageInfo,
   listCommunityReports,
 } from './src/services/communityStore.ts';
 import { synthesizeVayuResponse } from './src/services/geminiService.ts';
@@ -18,13 +19,19 @@ import {
   fetchLocalForecastGrid,
   searchCities,
 } from './src/services/openMeteoClient.ts';
-import type {
-  ActivityType,
-  AqiScale,
-  CityLocation,
-  HouseholdProfile,
-} from './src/types/airQuality.ts';
-import { validateCommunityReportInput, validateCoordinates } from './src/utils/validators.ts';
+import { SlidingWindowRateLimiter } from './src/utils/rateLimiter.ts';
+import {
+  sanitizeCityQuery,
+  validateActivityType,
+  validateAqiScale,
+  validateCalendarDate,
+  validateCommunityReportInput,
+  validateCoordinates,
+  validateFlagReason,
+  validateHouseholdProfiles,
+  validateLocationInput,
+  validateReportId,
+} from './src/utils/validators.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,22 +41,42 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '100kb' }));
 
-// Simple per-IP rate limiter for API routes (120 requests / minute)
-const rateMap = new Map<string, { count: number; resetAt: number }>();
+// Return clean JSON 400 on malformed JSON payloads instead of HTML stack traces
+app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'Invalid JSON request body.' });
+  }
+  return next(err);
+});
+
+// Bounded per-IP sliding-window rate limiter (120 requests / minute) with periodic cleanup
+const apiRateLimiter = new SlidingWindowRateLimiter({
+  maxRequests: 120,
+  windowMs: 60_000,
+  maxEntries: 5000,
+});
+setInterval(() => {
+  apiRateLimiter.cleanup();
+}, 60_000).unref();
+
 app.use('/api', (req, res, next) => {
   const ip = req.ip || 'unknown';
-  const now = Date.now();
-  const entry = rateMap.get(ip);
-  if (!entry || entry.resetAt <= now) {
-    rateMap.set(ip, { count: 1, resetAt: now + 60_000 });
-    return next();
+  const decision = apiRateLimiter.check(ip);
+  res.setHeader('X-RateLimit-Limit', String(decision.limit));
+  res.setHeader('X-RateLimit-Remaining', String(decision.remaining));
+  if (!decision.allowed) {
+    res.setHeader('Retry-After', String(decision.retryAfterSeconds));
+    return res.status(429).json({
+      error: 'Rate limit exceeded. Please pause briefly and try again.',
+      retryAfterSeconds: decision.retryAfterSeconds,
+    });
   }
-  if (entry.count >= 120) {
-    return res.status(429).json({ error: 'Rate limit exceeded. Please pause briefly and try again.' });
-  }
-  entry.count += 1;
   return next();
 });
+
+function isPlainObject(val: unknown): val is Record<string, unknown> {
+  return Boolean(val) && typeof val === 'object' && !Array.isArray(val);
+}
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -59,21 +86,33 @@ app.get('/api/health', (_req, res) => {
     geminiConfigured: Boolean(
       process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY',
     ),
+    communityStorage: getCommunityStorageInfo().storageMode,
   });
 });
 
 app.get('/api/air-quality', async (req, res) => {
   try {
-    const lat = req.query.lat ? Number(req.query.lat) : DEFAULT_CITY.latitude;
-    const lon = req.query.lon ? Number(req.query.lon) : DEFAULT_CITY.longitude;
+    const lat =
+      req.query.lat !== undefined && String(req.query.lat).trim() !== ''
+        ? req.query.lat
+        : DEFAULT_CITY.latitude;
+    const lon =
+      req.query.lon !== undefined && String(req.query.lon).trim() !== ''
+        ? req.query.lon
+        : DEFAULT_CITY.longitude;
     const coords = validateCoordinates(lat, lon);
-    if (!coords.valid) {
-      return res.status(400).json({ error: coords.error });
+    if (!coords.valid || coords.latitude === undefined || coords.longitude === undefined) {
+      return res.status(400).json({ error: coords.error ?? 'Invalid coordinates.' });
     }
 
-    const name = typeof req.query.name === 'string' && req.query.name.trim() ? req.query.name.trim().slice(0, 80) : DEFAULT_CITY.name;
-    const country = typeof req.query.country === 'string' ? req.query.country.trim().slice(0, 60) : '';
-    const region = typeof req.query.region === 'string' ? req.query.region.trim().slice(0, 60) : undefined;
+    const name =
+      typeof req.query.name === 'string' && req.query.name.trim()
+        ? req.query.name.trim().replace(/[<>]/g, '').slice(0, 80)
+        : DEFAULT_CITY.name;
+    const country =
+      typeof req.query.country === 'string' ? req.query.country.trim().replace(/[<>]/g, '').slice(0, 60) : '';
+    const region =
+      typeof req.query.region === 'string' ? req.query.region.trim().replace(/[<>]/g, '').slice(0, 60) : undefined;
 
     const dataset = await fetchEnvironmentalDataset({
       name,
@@ -91,11 +130,17 @@ app.get('/api/air-quality', async (req, res) => {
 
 app.get('/api/air-quality/grid', async (req, res) => {
   try {
-    const lat = Number(req.query.lat ?? DEFAULT_CITY.latitude);
-    const lon = Number(req.query.lon ?? DEFAULT_CITY.longitude);
+    const lat =
+      req.query.lat !== undefined && String(req.query.lat).trim() !== ''
+        ? req.query.lat
+        : DEFAULT_CITY.latitude;
+    const lon =
+      req.query.lon !== undefined && String(req.query.lon).trim() !== ''
+        ? req.query.lon
+        : DEFAULT_CITY.longitude;
     const coords = validateCoordinates(lat, lon);
     if (!coords.valid || coords.latitude === undefined || coords.longitude === undefined) {
-      return res.status(400).json({ error: coords.error });
+      return res.status(400).json({ error: coords.error ?? 'Invalid coordinates.' });
     }
     const grid = await fetchLocalForecastGrid(coords.latitude, coords.longitude);
     return res.json({
@@ -109,37 +154,49 @@ app.get('/api/air-quality/grid', async (req, res) => {
 });
 
 app.get('/api/geocode', async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q : '';
+  const sanitized = sanitizeCityQuery(q);
+  if (!sanitized.valid) {
+    return res.status(400).json({ error: sanitized.error ?? 'Invalid city query.' });
+  }
   try {
-    const q = typeof req.query.q === 'string' ? req.query.q : '';
-    const results = await searchCities(q);
+    const results = await searchCities(sanitized.cleaned);
     return res.json({ results });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'City lookup failed.';
-    return res.status(400).json({ error: message });
+    return res.status(502).json({ error: message });
   }
 });
 
 app.post('/api/ask', async (req, res) => {
   try {
-    const body = req.body as {
-      query?: string;
-      location?: Partial<CityLocation>;
-      profiles?: HouseholdProfile[];
-      preferredScale?: AqiScale;
-    };
+    if (!isPlainObject(req.body)) {
+      return res.status(400).json({ error: 'Request body must be a JSON object.' });
+    }
 
-    const query = typeof body.query === 'string' ? body.query.trim().slice(0, 500) : '';
+    const query = typeof req.body.query === 'string' ? req.body.query.trim().slice(0, 500) : '';
     if (query.length < 3) {
       return res.status(400).json({ error: 'Please enter a question of at least 3 characters.' });
     }
 
-    const preferredScale: AqiScale =
-      body.preferredScale === 'european_aqi' ? 'european_aqi' : 'us_aqi';
-    const profiles = Array.isArray(body.profiles) ? body.profiles.slice(0, 12) : [];
+    const scaleCheck = validateAqiScale(req.body.preferredScale);
+    if (!scaleCheck.valid || !scaleCheck.scale) {
+      return res.status(400).json({ error: scaleCheck.error });
+    }
+
+    const locCheck = validateLocationInput(req.body.location, DEFAULT_CITY);
+    if (!locCheck.valid || !locCheck.location) {
+      return res.status(400).json({ error: locCheck.error });
+    }
+
+    const profileCheck = validateHouseholdProfiles(req.body.profiles);
+    if (!profileCheck.valid) {
+      return res.status(400).json({ error: profileCheck.error });
+    }
 
     let dataset = null;
     try {
-      dataset = await fetchEnvironmentalDataset(body.location ?? DEFAULT_CITY);
+      dataset = await fetchEnvironmentalDataset(locCheck.location);
     } catch {
       dataset = null;
     }
@@ -147,8 +204,8 @@ app.post('/api/ask', async (req, res) => {
     const result = await runVayuOrchestrator({
       query,
       dataset,
-      profiles,
-      preferredScale,
+      profiles: profileCheck.profiles,
+      preferredScale: scaleCheck.scale,
       synthesizer: synthesizeVayuResponse,
     });
 
@@ -161,40 +218,58 @@ app.post('/api/ask', async (req, res) => {
 
 app.post('/api/routine-plan', async (req, res) => {
   try {
-    const body = req.body as {
-      location?: Partial<CityLocation>;
-      activity?: ActivityType;
-      date?: string;
-      preferredScale?: AqiScale;
-    };
+    if (!isPlainObject(req.body)) {
+      return res.status(400).json({ error: 'Request body must be a JSON object.' });
+    }
 
-    const preferredScale: AqiScale =
-      body.preferredScale === 'european_aqi' ? 'european_aqi' : 'us_aqi';
-    const activity = ACTIVITIES_META.some((a) => a.id === body.activity)
-      ? (body.activity as ActivityType)
-      : 'outdoor_exercise';
-    const dateStr =
-      typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
-        ? body.date
-        : undefined;
+    const scaleCheck = validateAqiScale(req.body.preferredScale);
+    if (!scaleCheck.valid || !scaleCheck.scale) {
+      return res.status(400).json({ error: scaleCheck.error });
+    }
 
-    const dataset = await fetchEnvironmentalDataset(body.location ?? DEFAULT_CITY);
-    const routine = runSmartRoutineAgent(dataset, activity, dateStr, preferredScale);
+    const activityCheck = validateActivityType(req.body.activity);
+    if (!activityCheck.valid || !activityCheck.activity) {
+      return res.status(400).json({ error: activityCheck.error });
+    }
+
+    const dateCheck = validateCalendarDate(req.body.date);
+    if (!dateCheck.valid) {
+      return res.status(400).json({ error: dateCheck.error });
+    }
+
+    const locCheck = validateLocationInput(req.body.location, DEFAULT_CITY);
+    if (!locCheck.valid || !locCheck.location) {
+      return res.status(400).json({ error: locCheck.error });
+    }
+
+    const dataset = await fetchEnvironmentalDataset(locCheck.location);
+    const routine = runSmartRoutineAgent(
+      dataset,
+      activityCheck.activity,
+      dateCheck.date,
+      scaleCheck.scale,
+    );
     const { agentResult: verificationAgentResult, report: verification } = runVerificationAgent({
       dataset,
       agentResults: [routine.agentResult],
-      preferredScale,
+      preferredScale: scaleCheck.scale,
+      draftAnswer: routine.agentResult.recommendation,
+      routineWindows: routine.windows,
     });
 
-    const actMeta = ACTIVITIES_META.find((a) => a.id === activity) ?? ACTIVITIES_META[0];
+    const actMeta = ACTIVITIES_META.find((a) => a.id === activityCheck.activity) ?? ACTIVITIES_META[0];
+    const summary =
+      verification.rejectedClaims.length > 0
+        ? `${routine.agentResult.recommendation} Verification note: ${verification.rejectedClaims.join(' ')}`
+        : routine.agentResult.recommendation;
 
     return res.json({
-      activity,
+      activity: activityCheck.activity,
       activityLabel: actMeta.label,
       date: routine.resolvedDate,
       windows: routine.windows,
       bestWindow: routine.bestWindow,
-      summary: routine.agentResult.recommendation,
+      summary,
       disclaimer:
         'Forecast windows indicate relative modelled air-quality patterns and never guarantee zero health risk or complete safety.',
       agentResults: [routine.agentResult, verificationAgentResult],
@@ -209,10 +284,15 @@ app.post('/api/routine-plan', async (req, res) => {
 });
 
 app.get('/api/community', (req, res) => {
-  const city = typeof req.query.city === 'string' ? req.query.city : undefined;
+  const city = typeof req.query.city === 'string' ? req.query.city.trim().slice(0, 60) : undefined;
+  const storageInfo = getCommunityStorageInfo();
   return res.json({
     reports: listCommunityReports(city),
-    notice: 'Community observations are user-submitted reports and are not scientifically calibrated sensor measurements.',
+    storageMode: storageInfo.storageMode,
+    persistenceNote: storageInfo.persistenceNote,
+    maxReports: storageInfo.maxReports,
+    notice:
+      'Community observations are user-submitted reports and are not scientifically calibrated sensor measurements.',
   });
 });
 
@@ -221,23 +301,77 @@ app.post('/api/community', (req, res) => {
   if (!validated.valid || !validated.sanitized) {
     return res.status(400).json({ error: validated.error });
   }
-  const created = addCommunityReport(validated.sanitized);
-  return res.status(201).json({ report: created });
+  const { report, authorToken } = addCommunityReport(validated.sanitized);
+  return res.status(201).json({
+    report,
+    authorToken,
+    storageMode: getCommunityStorageInfo().storageMode,
+  });
 });
 
 app.post('/api/community/:id/flag', (req, res) => {
-  const reason = typeof req.body?.reason === 'string' ? req.body.reason : 'Flagged by community';
-  const updated = flagCommunityReport(req.params.id, reason);
-  if (!updated) {
+  const idCheck = validateReportId(req.params.id);
+  if (!idCheck.valid || !idCheck.id) {
+    return res.status(400).json({ error: idCheck.error });
+  }
+
+  if (req.body !== undefined && !isPlainObject(req.body)) {
+    return res.status(400).json({ error: 'Request body must be a JSON object.' });
+  }
+
+  const reasonCheck = validateFlagReason((req.body as Record<string, unknown> | undefined)?.reason);
+  if (!reasonCheck.valid || !reasonCheck.reason) {
+    return res.status(400).json({ error: reasonCheck.error });
+  }
+
+  const adminToken = typeof req.headers['x-moderation-token'] === 'string' ? req.headers['x-moderation-token'] : undefined;
+  const configuredAdminToken = process.env.COMMUNITY_ADMIN_TOKEN;
+  const isModerator = Boolean(
+    configuredAdminToken && configuredAdminToken.length >= 12 && adminToken === configuredAdminToken,
+  );
+
+  const actorKey = req.ip || 'unknown';
+  const result = flagCommunityReport(idCheck.id, reasonCheck.reason, actorKey, isModerator);
+  if (result.status === 'not_found') {
     return res.status(404).json({ error: 'Observation not found.' });
   }
-  return res.json({ report: updated });
+  if (result.status === 'already_flagged') {
+    return res.status(409).json({ error: 'This observation has already been flagged from your connection.' });
+  }
+  return res.json({ report: result.report });
 });
 
 app.delete('/api/community/:id', (req, res) => {
-  const removed = deleteCommunityReport(req.params.id);
-  if (!removed) {
+  const idCheck = validateReportId(req.params.id);
+  if (!idCheck.valid || !idCheck.id) {
+    return res.status(400).json({ error: idCheck.error });
+  }
+
+  const authorToken =
+    typeof req.headers['x-report-token'] === 'string' ? req.headers['x-report-token'].trim() : undefined;
+  const adminToken =
+    typeof req.headers['x-moderation-token'] === 'string'
+      ? req.headers['x-moderation-token'].trim()
+      : undefined;
+
+  const outcome = deleteCommunityReport(idCheck.id, {
+    authorToken,
+    adminToken,
+    configuredAdminToken: process.env.COMMUNITY_ADMIN_TOKEN,
+  });
+
+  if (outcome === 'not_found') {
     return res.status(404).json({ error: 'Observation not found.' });
+  }
+  if (outcome === 'unauthorized') {
+    return res.status(401).json({
+      error: 'Authorization required. Provide a valid report author token or moderation token to remove an observation.',
+    });
+  }
+  if (outcome === 'forbidden') {
+    return res.status(403).json({
+      error: 'You are not authorized to delete this observation.',
+    });
   }
   return res.json({ deleted: true });
 });

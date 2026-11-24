@@ -51,13 +51,23 @@ export const AskVayuPage: React.FC = () => {
     setInput('');
 
     try {
+      const anonymizedProfiles = profiles.map((p, idx) => ({
+        id: `anon-${idx + 1}`,
+        label: `Household member ${idx + 1}`,
+        group: p.group,
+        hasRespiratorySensitivity: p.hasRespiratorySensitivity,
+        sensitivityNote: '',
+        createdAt: '',
+        updatedAt: '',
+      }));
+
       const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: cleaned,
           location,
-          profiles,
+          profiles: anonymizedProfiles,
           preferredScale: preferences.preferredScale,
         }),
       });
@@ -91,7 +101,7 @@ export const AskVayuPage: React.FC = () => {
           <p className="mt-1 text-sm text-[#9BB0C0]">
             Multi-agent conversational intelligence grounded in live Open-Meteo data for{' '}
             <strong className="text-[#F2F7FA]">{location.name}</strong> ({profiles.length} household profile
-            {profiles.length === 1 ? '' : 's'} active).
+            {profiles.length === 1 ? '' : 's'} active; only anonymized group &amp; sensitivity flags are sent to Gemini, never names or notes).
           </p>
         </div>
 

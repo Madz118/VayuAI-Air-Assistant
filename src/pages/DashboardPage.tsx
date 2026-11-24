@@ -281,9 +281,14 @@ export const DashboardPage: React.FC = () => {
           {/* 6 Pollutant Breakdown Cards */}
           <section aria-labelledby="pollutants-heading">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3.5">
-              <h2 id="pollutants-heading" className="text-lg font-semibold text-[#F2F7FA]">
-                Pollutant Concentrations vs WHO 2021 Reference
-              </h2>
+              <div>
+                <h2 id="pollutants-heading" className="text-lg font-semibold text-[#F2F7FA]">
+                  Hourly Pollutant Levels vs WHO 2021 Screening References
+                </h2>
+                <p className="text-xs text-[#9BB0C0] mt-0.5">
+                  Single-hour modelled snapshots scaled against WHO 24-hour mean (8-hour max for O₃) references—screening ratios only, not formal multi-hour exceedances.
+                </p>
+              </div>
               <span className="text-xs text-[#B5C7D4] font-mono">
                 Dominant: <strong className="text-[#49E3D0]">{dataset.dominantPollutant.symbol}</strong>
               </span>
@@ -305,7 +310,7 @@ export const DashboardPage: React.FC = () => {
                       <span className="font-mono text-2xl font-bold text-[#F2F7FA] tabular-nums">
                         {p.value !== null ? p.value.toFixed(1) : '—'}
                       </span>
-                      <span className="text-xs text-[#9BB0C0]">{p.unit}</span>
+                      <span className="text-xs text-[#9BB0C0]">{p.unit} (1h)</span>
                     </div>
                   </div>
 
@@ -325,7 +330,7 @@ export const DashboardPage: React.FC = () => {
                         {p.statusLabel}
                       </span>
                       <span className="font-mono text-[#B5C7D4]">
-                        WHO: {p.who24hGuideline} {p.unit}
+                        WHO {p.guidelinePeriodShort}: {p.whoGuideline} {p.unit}
                       </span>
                     </div>
                     <p className="text-xs text-[#9BB0C0] leading-relaxed">{p.healthNote}</p>
