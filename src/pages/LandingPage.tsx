@@ -473,8 +473,8 @@ export const LandingPage: React.FC = () => {
 
       </main>
 
-      <footer className="relative z-10 border-t border-white/10 bg-[#07111F] py-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#B5C7D4]">
+      <footer className="relative z-10 border-t border-white/10 bg-[#07111F] pt-8 pb-24 sm:pb-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 sm:pr-24 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#B5C7D4]">
           <span>VAYU AI · Urban Air Quality Intelligence Assistant</span>
           <div className="flex flex-wrap items-center gap-4">
             <Link to="/dashboard" className="hover:text-[#F2F7FA]">Dashboard</Link>

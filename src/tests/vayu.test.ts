@@ -15,6 +15,14 @@ import {
   identifyDominantPollutant,
   interpretAqiCategory,
 } from '../utils/aqi.ts';
+import {
+  buildFloatingChatPayload,
+  createWelcomeMessage,
+  FLOATING_CHAT_SUGGESTIONS,
+  FLOATING_CHAT_WELCOME,
+  formatAssistantResponseForCopy,
+  validateChatInput,
+} from '../utils/floatingChat.ts';
 import { SlidingWindowRateLimiter } from '../utils/rateLimiter.ts';
 import { calculateTransparentCommuteComparison } from '../utils/sustainabilityCalc.ts';
 import {
@@ -532,4 +540,72 @@ test('Orchestrator refuses confident guidance when live environmental dataset is
   assert.ok(response.environmentalEvidence[0].includes('unavailable'));
   assert.ok(response.directAnswer.toLowerCase().includes('unavailable'));
 });
+
+test('Floating chatbot helpers enforce input rules, privacy payload, welcome copy, and clipboard formatting', () => {
+  const welcome = createWelcomeMessage();
+  assert.equal(welcome.role, 'assistant');
+  assert.equal(welcome.isWelcome, true);
+  assert.equal(welcome.content, FLOATING_CHAT_WELCOME);
+  assert.deepEqual([...FLOATING_CHAT_SUGGESTIONS], [
+    'Check my air quality',
+    "Explain today's pollution",
+    'Best time to go outside',
+    'Protect my family',
+  ]);
+
+  // Input validation & duplicate-submission guard
+  assert.equal(validateChatInput('  hi ', false).valid, false);
+  assert.equal(validateChatInput('Check air quality', true).valid, false);
+  assert.equal(validateChatInput('a'.repeat(501), false).valid, false);
+  const ok = validateChatInput('  Best time to jog?\r\n', false);
+  assert.equal(ok.valid, true);
+  assert.equal(ok.cleaned, 'Best time to jog?');
+
+  // Privacy guard: floating chatbot never transmits household profiles implicitly
+  const payload = buildFloatingChatPayload({
+    query: 'Protect my family',
+    location: DEFAULT_CITY,
+    preferredScale: 'european_aqi',
+  });
+  assert.deepEqual(payload.profiles, []);
+  assert.equal(payload.preferredScale, 'european_aqi');
+  assert.equal(payload.location.name, DEFAULT_CITY.name);
+
+  // Copy formatting includes verified source, timestamp, scale, and recommendations
+  const formatted = formatAssistantResponseForCopy({
+    id: 'm1',
+    role: 'assistant',
+    content: 'Moderate conditions right now.',
+    createdAt: '2026-11-24T10:00:00Z',
+    response: {
+      requestId: 'req-1',
+      intent: 'air_quality_diagnosis',
+      query: 'Check my air quality',
+      directAnswer: 'Moderate conditions right now (US AQI 82).',
+      environmentalEvidence: ['PM2.5: 26.4 µg/m³'],
+      explanation: 'PM2.5 is the dominant driver.',
+      recommendedActions: ['Pace vigorous outdoor exercise.'],
+      limitationsAndUncertainty: ['Modelled CAMS grid forecast.'],
+      dataSource: 'Open-Meteo Air Quality API (CAMS Atmospheric Forecast)',
+      dataTimestamp: '2026-11-24T10:00',
+      aqiScaleUsed: 'US EPA Air Quality Index (US AQI)',
+      agentsInvolved: ['Pollution Intelligence Agent', 'Verification Agent'],
+      agentResults: [],
+      verification: {
+        passed: true,
+        correctionApplied: false,
+        checks: [],
+        warnings: [],
+        rejectedClaims: [],
+      },
+      aiSynthesized: true,
+    },
+  });
+  assert.ok(formatted.includes('US EPA Air Quality Index (US AQI)'));
+  assert.ok(formatted.includes('Open-Meteo Air Quality API'));
+  assert.ok(formatted.includes('2026-11-24T10:00'));
+  assert.ok(formatted.includes('1. Pace vigorous outdoor exercise.'));
+  assert.ok(formatted.includes('Verification: Passed'));
+});
+
 

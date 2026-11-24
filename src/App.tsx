@@ -1,4 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
+import { FloatingVayuChat } from './components/chat/FloatingVayuChat.tsx';
+import { FloatingChatProvider } from './context/FloatingChatContext.tsx';
 import { VayuProvider } from './context/VayuContext.tsx';
 import { AppLayout } from './layouts/AppLayout.tsx';
 import { AboutPage } from './pages/AboutPage.tsx';
@@ -21,21 +23,24 @@ function LandingOrAutostart() {
 export default function App() {
   return (
     <VayuProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<LandingOrAutostart />} />
-          <Route element={<AppLayout />}>
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/map" element={<PollutionMapPage />} />
-            <Route path="/ask" element={<AskVayuPage />} />
-            <Route path="/planner" element={<RoutinePlannerPage />} />
-            <Route path="/family" element={<FamilyProtectionPage />} />
-            <Route path="/community" element={<CommunityPage />} />
-            <Route path="/about" element={<AboutPage />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
+      <FloatingChatProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<LandingOrAutostart />} />
+            <Route element={<AppLayout />}>
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/map" element={<PollutionMapPage />} />
+              <Route path="/ask" element={<AskVayuPage />} />
+              <Route path="/planner" element={<RoutinePlannerPage />} />
+              <Route path="/family" element={<FamilyProtectionPage />} />
+              <Route path="/community" element={<CommunityPage />} />
+              <Route path="/about" element={<AboutPage />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+          <FloatingVayuChat />
+        </BrowserRouter>
+      </FloatingChatProvider>
     </VayuProvider>
   );
 }

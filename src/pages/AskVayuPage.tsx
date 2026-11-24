@@ -312,7 +312,7 @@ export const AskVayuPage: React.FC = () => {
       {/* Prompt Input Form */}
       <form
         onSubmit={handleSubmit}
-        className="sticky bottom-4 z-20 rounded-2xl border border-white/15 bg-[#0B1928] p-3 shadow-[0_-12px_32px_rgba(7,17,31,0.92)] flex items-center gap-3 focus-within:border-[#49E3D0] focus-within:ring-2 focus-within:ring-[#49E3D0]/50"
+        className="sticky bottom-4 z-20 mr-[68px] sm:mr-20 rounded-2xl border border-white/15 bg-[#0B1928] p-2.5 sm:p-3 shadow-[0_-12px_32px_rgba(7,17,31,0.92)] flex items-center gap-2 sm:gap-3 focus-within:border-[#49E3D0] focus-within:ring-2 focus-within:ring-[#49E3D0]/50"
       >
         <label htmlFor="ask-vayu-input" className="sr-only">
           Ask VAYU AI a question about air quality
@@ -323,13 +323,13 @@ export const AskVayuPage: React.FC = () => {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about jogging tomorrow, window ventilation, pollutants, or family protection..."
-          className="flex-1 bg-transparent px-3 py-2 text-sm text-[#F2F7FA] placeholder-[#9BB0C0] focus:outline-none"
+          className="min-w-0 flex-1 bg-transparent px-2.5 sm:px-3 py-2 text-sm text-[#F2F7FA] placeholder-[#9BB0C0] focus:outline-none"
         />
         <button
           type="submit"
           disabled={input.trim().length < 3}
           aria-label="Send question to VAYU AI"
-          className="inline-flex items-center gap-2 rounded-xl bg-[#16C7B0] px-4 min-h-[42px] text-xs font-semibold text-[#07111F] hover:bg-[#49E3D0] disabled:opacity-50 whitespace-nowrap"
+          className="inline-flex items-center gap-2 rounded-xl bg-[#16C7B0] px-3.5 sm:px-4 min-h-[42px] text-xs font-semibold text-[#07111F] hover:bg-[#49E3D0] disabled:opacity-50 whitespace-nowrap shrink-0"
         >
           <span>Ask VAYU</span>
           <Send className="w-3.5 h-3.5" aria-hidden="true" />

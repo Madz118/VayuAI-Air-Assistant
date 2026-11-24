@@ -90,6 +90,70 @@
   color: #49E3D0 !important;
 }
 
+/* Floating VAYU chatbot safe-area anchor & animations */
+.vayu-floating-anchor {
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  right: calc(1rem + env(safe-area-inset-right, 0px));
+}
+
+@media (min-width: 640px) {
+  .vayu-floating-anchor {
+    bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    right: calc(1.5rem + env(safe-area-inset-right, 0px));
+  }
+}
+
+@keyframes vayuFloat {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
+@keyframes vayuSlideUpFade {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes vayuTypingDot {
+  0%, 60%, 100% {
+    opacity: 0.35;
+    transform: translate3d(0, 0, 0);
+  }
+  30% {
+    opacity: 1;
+    transform: translate3d(0, -3px, 0);
+  }
+}
+
+.vayu-launcher-float {
+  animation: vayuFloat 3.6s ease-in-out infinite;
+}
+
+.vayu-chat-panel-enter {
+  animation: vayuSlideUpFade 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.vayu-typing-dot {
+  animation: vayuTypingDot 1.2s ease-in-out infinite;
+}
+
+.vayu-typing-dot-2 {
+  animation-delay: 160ms;
+}
+
+.vayu-typing-dot-3 {
+  animation-delay: 320ms;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

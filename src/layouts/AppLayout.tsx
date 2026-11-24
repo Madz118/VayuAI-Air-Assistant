@@ -285,7 +285,7 @@ export const AppLayout: React.FC = () => {
         <main
           id="main-content"
           tabIndex={-1}
-          className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1320px] w-full mx-auto focus:outline-none"
+          className="flex-1 p-4 sm:p-6 lg:p-8 pb-24 sm:pb-24 lg:pb-24 max-w-[1320px] w-full mx-auto focus:outline-none"
           data-route={routeLoc.pathname}
         >
           <Outlet />
