@@ -1,6 +1,10 @@
 {
   "name": "VAYU AI",
   "description": "Urban Air Quality Intelligence Assistant — Breathe Smarter. Live Better. Multi-agent environmental analytics, forecast planning, and household exposure guidance.",
-  "requestFramePermissions": ["geolocation"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
