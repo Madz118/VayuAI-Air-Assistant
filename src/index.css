@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --vayu-bg-main: #07111F;
+    --vayu-bg-secondary: #0B1928;
+    --vayu-bg-card: #102334;
+    --vayu-teal: #16C7B0;
+    --vayu-turquoise: #49E3D0;
+    --vayu-cyan: #55B8E8;
+    --vayu-text-main: #F2F7FA;
+    --vayu-text-secondary: #9BB0C0;
+    --vayu-border: rgba(255, 255, 255, 0.09);
+  }
+
+  html {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    background-color: #07111F;
+    color: #F2F7FA;
+    scroll-behavior: smooth;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  .font-mono, .tabular-nums {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Accessible focus ring */
+:focus-visible {
+  outline: 2px solid #49E3D0;
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0.75rem;
+  z-index: 100;
+  padding: 0.625rem 1rem;
+  border-radius: 0.75rem;
+  background-color: #16C7B0;
+  color: #07111F;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  left: 0.75rem;
+}
+
+/* Custom dark scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #07111F;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(155, 176, 192, 0.25);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(22, 199, 176, 0.45);
+}
+
+/* Leaflet dark theme overrides */
+.leaflet-container {
+  background: #07111F;
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #102334;
+  color: #F2F7FA;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.leaflet-control-attribution {
+  background: rgba(7, 17, 31, 0.88) !important;
+  color: #B5C7D4 !important;
+  font-size: 11px !important;
+}
+.leaflet-control-attribution a {
+  color: #49E3D0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+html.vayu-reduced-motion {
+  scroll-behavior: auto;
+}
+html.vayu-reduced-motion *,
+html.vayu-reduced-motion *::before,
+html.vayu-reduced-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
