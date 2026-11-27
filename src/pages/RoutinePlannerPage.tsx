@@ -152,6 +152,11 @@ export const RoutinePlannerPage: React.FC = () => {
               <div>
                 <h2 className="text-base font-semibold text-[#F2F7FA]">
                   {plan.activityLabel} · {plan.date}
+                  {plan.localTimeLabel ? (
+                    <span className="ml-2 text-xs font-mono font-normal text-[#9BB0C0]">
+                      (Local clock: {plan.localTimeLabel})
+                    </span>
+                  ) : null}
                 </h2>
                 <p className="mt-1.5 text-sm text-[#F2F7FA]/90 leading-relaxed">{plan.summary}</p>
                 <p className="mt-2 text-xs text-[#9BB0C0] flex items-center gap-1.5">
@@ -166,7 +171,7 @@ export const RoutinePlannerPage: React.FC = () => {
           <section aria-labelledby="timeline-heading" className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 id="timeline-heading" className="text-lg font-semibold text-[#F2F7FA]">
-                Daily Forecast Windows
+                Upcoming Forecast Windows
               </h2>
               <span className="text-xs font-mono text-[#9BB0C0]">
                 {preferences.preferredScale === 'european_aqi' ? 'EU EAQI' : 'US AQI'}
@@ -174,8 +179,22 @@ export const RoutinePlannerPage: React.FC = () => {
             </div>
 
             {plan.windows.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-[#102334]/95 p-6 text-sm text-[#9BB0C0]">
-                Forecast windows are unavailable for {plan.date}. VAYU AI does not fabricate missing time slots.
+              <div className="rounded-2xl border border-white/10 bg-[#102334]/95 p-6 text-sm text-[#B5C7D4] space-y-3">
+                <p>
+                  {plan.excludedPastCount && plan.excludedPastCount > 0
+                    ? `All daytime/evening 3-hour windows for ${plan.date} have already elapsed or have less than 90 minutes remaining${plan.localTimeLabel ? ` as of ${plan.localTimeLabel}` : ''}. Past windows are excluded.`
+                    : `Forecast windows are unavailable for ${plan.date}. VAYU AI does not fabricate missing time slots.`}
+                </p>
+                {availableDates[1] && selectedDate === availableDates[0] && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(availableDates[1])}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[#49E3D0]/40 bg-[#16C7B0]/15 px-4 py-2 text-xs font-semibold text-[#49E3D0] hover:bg-[#16C7B0]/25"
+                  >
+                    <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>View Tomorrow ({availableDates[1]})</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
@@ -216,9 +235,14 @@ export const RoutinePlannerPage: React.FC = () => {
                           <div className="inline-flex items-center gap-1.5 font-mono text-sm font-bold text-[#F2F7FA]">
                             <Clock className="w-4 h-4 text-[#49E3D0]" aria-hidden="true" />
                             <span>
-                              {w.startTime.slice(11, 16)} – {w.endTime.slice(11, 16)}
+                              {w.startTime.slice(0, 10)} · {w.startTime.slice(11, 16)} – {w.endTime.slice(11, 16)}
                             </span>
                           </div>
+                          {w.timeStatus === 'in_progress' && (
+                            <span className="rounded-lg border border-[#55B8E8]/35 bg-[#55B8E8]/15 px-2 py-0.5 text-[11px] font-mono text-[#55B8E8]">
+                              In progress · ~{w.remainingMinutes}m left
+                            </span>
+                          )}
                           <span className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${badgeStyle}`}>
                             {w.suitabilityLabel}
                           </span>

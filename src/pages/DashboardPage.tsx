@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   CloudSun,
   Compass,
@@ -17,6 +16,7 @@ import { AqiScaleBadge } from '../components/common/AqiScaleBadge.tsx';
 import { CitySearchModal } from '../components/common/CitySearchModal.tsx';
 import { ErrorStateCard } from '../components/common/ErrorStateCard.tsx';
 import { PRESET_CITIES } from '../config/constants.ts';
+import { useFloatingChat } from '../context/FloatingChatContext.tsx';
 import { useVayu } from '../context/VayuContext.tsx';
 import {
   buildPollutantBreakdown,
@@ -27,6 +27,7 @@ import {
 
 export const DashboardPage: React.FC = () => {
   const { location, setLocation, dataset, loading, error, refreshData, preferences, profiles } = useVayu();
+  const { openChat } = useFloatingChat();
   const [cityModalOpen, setCityModalOpen] = useState(false);
 
   const primaryAqiValue = dataset
@@ -376,13 +377,14 @@ export const DashboardPage: React.FC = () => {
                   Prepared by {pollutionAgent.agent_name} & {familyAgent.agent_name}
                 </p>
               </div>
-              <Link
-                to="/ask"
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#16C7B0]/15 border border-[#49E3D0]/35 px-4 py-2.5 text-xs font-semibold text-[#49E3D0] hover:bg-[#16C7B0]/25 whitespace-nowrap min-h-[40px]"
+              <button
+                type="button"
+                onClick={openChat}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#16C7B0]/15 border border-[#49E3D0]/35 px-4 py-2.5 text-xs font-semibold text-[#49E3D0] hover:bg-[#16C7B0]/25 whitespace-nowrap min-h-[40px] cursor-pointer"
               >
                 <MessageSquareText className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>Ask VAYU About Your Day</span>
-              </Link>
+              </button>
             </div>
 
             <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">

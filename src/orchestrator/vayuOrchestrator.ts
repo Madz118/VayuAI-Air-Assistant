@@ -11,11 +11,19 @@ import type {
   AgentName,
   AgentResult,
   AqiScale,
+  CityLocation,
   EnvironmentalDataset,
   HouseholdProfile,
   OrchestratorResponse,
   RoutineWindow,
 } from '../types/airQuality.ts';
+import { POLLUTANT_META } from '../config/constants.ts';
+import { interpretAqiCategory } from '../utils/aqi.ts';
+import {
+  parseHypotheticalScenario,
+  type HypotheticalScenario,
+} from '../utils/hypotheticalScenario.ts';
+import { addDaysToIsoDate, getLocalDateTimeContext } from '../utils/localTime.ts';
 import { validateHouseholdProfiles } from '../utils/validators.ts';
 
 export type SynthesizedExplanation = SynthesisDraft;
@@ -28,6 +36,7 @@ export type AiSynthesizerFn = (context: {
   agentResults: AgentResult[];
   profiles: HouseholdProfile[];
   routineWindows?: RoutineWindow[];
+  hypotheticalScenario?: HypotheticalScenario | null;
 }) => Promise<SynthesizedExplanation>;
 
 const DIAGNOSTIC_RE =
@@ -113,17 +122,86 @@ export function classifyUserIntent(query: string): {
   return { intent, activity, targetOffsetDays, agentsNeeded };
 }
 
+function formatLiveReferenceNote(dataset: EnvironmentalDataset | null, scale: AqiScale): string | undefined {
+  if (!dataset) return undefined;
+  const liveVal = scale === 'european_aqi' ? dataset.current.european_aqi : dataset.current.us_aqi;
+  const liveCat = interpretAqiCategory(liveVal, scale);
+  return `Actual live conditions in ${dataset.location.name}${dataset.location.country ? `, ${dataset.location.country}` : ''} are ${liveCat.label} ${liveCat.value ?? 'N/A'} (${liveCat.shortLabel}) at ${dataset.currentTimestamp}.`;
+}
+
+function buildPollutantEducationLead(
+  query: string,
+  dataset: EnvironmentalDataset,
+): { directLead: string; explanationLead: string } | null {
+  const q = query.toLowerCase();
+  const asksMeaningOrHealth = /\b(why|important|health|effect|effects|harm|body|lungs?|risk|what\s+is)\b/.test(q);
+  if (!asksMeaningOrHealth) return null;
+
+  let key: keyof typeof POLLUTANT_META | null = null;
+  if (/\bpm2\.?5\b/.test(q)) key = 'pm2_5';
+  else if (/\bpm10\b/.test(q)) key = 'pm10';
+  else if (/\b(?:no2|nitrogen\s+dioxide)\b/.test(q)) key = 'nitrogen_dioxide';
+  else if (/\b(?:o3|ozone)\b/.test(q)) key = 'ozone';
+  else if (/\b(?:so2|sul(?:ph|f)ur\s+dioxide)\b/.test(q)) key = 'sulphur_dioxide';
+  else if (/\b(?:co|carbon\s+monoxide)\b/.test(q)) key = 'carbon_monoxide';
+
+  if (!key) return null;
+  const meta = POLLUTANT_META[key];
+  const currentVal = dataset.current[key];
+  const valStr =
+    typeof currentVal === 'number' && Number.isFinite(currentVal)
+      ? `${currentVal.toFixed(1)} ${meta.unit}`
+      : 'unavailable right now';
+
+  return {
+    directLead: `${meta.symbol} (${meta.name}) matters because: ${meta.healthNote} At ${dataset.location.name}, current 1-hour modelled ${meta.symbol} is ${valStr} (single-hour screening reference vs WHO ${meta.guidelinePeriod} ${meta.whoGuideline} ${meta.unit}).`,
+    explanationLead: `Because ${meta.symbol} particles or gases interact directly with airways, single-hour spikes raise exposure risk for children, older adults, and people with respiratory sensitivity even when headline indices appear moderate.`,
+  };
+}
+
 function buildDeterministicFallbackExplanation(params: {
   query: string;
   dataset: EnvironmentalDataset | null;
   agentResults: AgentResult[];
+  hypotheticalScenario: HypotheticalScenario | null;
+  effectiveScale: AqiScale;
   aiError?: string;
 }): SynthesizedExplanation {
-  const { dataset, agentResults, aiError } = params;
+  const { query, dataset, agentResults, hypotheticalScenario, effectiveScale, aiError } = params;
   const pollution = agentResults.find((a) => a.agent_name === 'Pollution Intelligence Agent');
   const routine = agentResults.find((a) => a.agent_name === 'Smart Routine Agent');
   const family = agentResults.find((a) => a.agent_name === 'Family Protection Agent');
   const sustain = agentResults.find((a) => a.agent_name === 'Sustainability Agent');
+
+  if (hypotheticalScenario) {
+    const cat = hypotheticalScenario.category;
+    const liveNote = formatLiveReferenceNote(dataset, effectiveScale);
+    const primaryGuidance = family?.recommendation ?? pollution?.recommendation ?? cat.description;
+    const directAnswer = `HYPOTHETICAL SCENARIO (${cat.label} = ${hypotheticalScenario.assumedAqi}, ${cat.shortLabel}): ${primaryGuidance}`;
+    const explanation = [
+      `This evaluation models your assumed ${hypotheticalScenario.scaleLabel} value of ${hypotheticalScenario.assumedAqi} (${cat.shortLabel}: ${cat.description}) without replacing it with live readings.`,
+      liveNote ? `ACTUAL LIVE CONDITIONS (reference only): ${liveNote}` : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const actions = [
+      family?.recommendation,
+      pollution?.recommendation,
+      sustain?.recommendation,
+    ].filter((v): v is string => Boolean(v));
+
+    return {
+      directAnswer,
+      explanation,
+      recommendedActions:
+        actions.length > 0
+          ? Array.from(new Set(actions)).slice(0, 4)
+          : [cat.description],
+      aiSynthesized: false,
+      aiError,
+    };
+  }
 
   if (!dataset) {
     return {
@@ -139,10 +217,18 @@ function buildDeterministicFallbackExplanation(params: {
     };
   }
 
+  const pollutantLead = buildPollutantEducationLead(query, dataset);
   const primaryObservation = pollution?.observations[0];
   const primaryGuidance = routine?.recommendation ?? family?.recommendation ?? pollution?.recommendation;
-  const directParts = [primaryObservation, primaryGuidance].filter(Boolean);
-  const explanationParts = agentResults.flatMap((a) => a.observations.slice(0, 2));
+  const directParts = (
+    pollutantLead
+      ? [pollutantLead.directLead, primaryObservation]
+      : [primaryObservation, primaryGuidance]
+  ).filter((v): v is string => Boolean(v));
+  const explanationParts = [
+    pollutantLead?.explanationLead,
+    ...agentResults.flatMap((a) => a.observations.slice(0, 2)),
+  ].filter((v): v is string => Boolean(v));
   const actions = [
     routine?.recommendation,
     family?.recommendation,
@@ -168,58 +254,98 @@ export async function runVayuOrchestrator(params: {
   profiles: HouseholdProfile[];
   preferredScale: AqiScale;
   synthesizer?: AiSynthesizerFn;
+  requestedLocation?: Partial<CityLocation> | null;
+  referenceNowMs?: number;
 }): Promise<OrchestratorResponse> {
-  const { query, dataset, preferredScale, synthesizer } = params;
+  const {
+    query,
+    dataset,
+    preferredScale,
+    synthesizer,
+    requestedLocation = null,
+    referenceNowMs,
+  } = params;
   const profileCheck = validateHouseholdProfiles(params.profiles);
   const profiles = profileCheck.valid ? profileCheck.profiles : [];
   const requestId = `vayu-${Date.now().toString(36)}`;
-  const { intent, activity, targetOffsetDays, agentsNeeded } = classifyUserIntent(query);
+
+  const hypotheticalScenario = parseHypotheticalScenario(query, preferredScale);
+  const effectiveScale: AqiScale = hypotheticalScenario ? hypotheticalScenario.scale : preferredScale;
+  const { intent: baseIntent, activity, targetOffsetDays, agentsNeeded } = classifyUserIntent(query);
+  const intent = hypotheticalScenario ? `hypothetical_${baseIntent}` : baseIntent;
+
+  // Ensure Family Protection Agent runs for hypothetical population/safety queries even if "protect" wasn't spelled out
+  const effectiveAgents: AgentName[] = [...agentsNeeded];
+  if (
+    hypotheticalScenario &&
+    !effectiveAgents.includes('Family Protection Agent') &&
+    (/\b(child|kid|elder|senior|family|should\s+(?:we|i|people|everyone)|outdoor|safe|precaution)\b/i.test(query) ||
+      hypotheticalScenario.assumedAqi >= 100)
+  ) {
+    effectiveAgents.splice(1, 0, 'Family Protection Agent');
+  }
 
   const specialistResults: AgentResult[] = [];
   let routineWindows: RoutineWindow[] = [];
 
-  if (agentsNeeded.includes('Pollution Intelligence Agent')) {
-    specialistResults.push(runPollutionIntelligenceAgent(dataset, preferredScale));
+  if (effectiveAgents.includes('Pollution Intelligence Agent')) {
+    specialistResults.push(
+      runPollutionIntelligenceAgent(dataset, effectiveScale, hypotheticalScenario),
+    );
   }
 
-  if (agentsNeeded.includes('Family Protection Agent')) {
-    specialistResults.push(runFamilyProtectionAgent(dataset, profiles, preferredScale));
+  if (effectiveAgents.includes('Family Protection Agent')) {
+    specialistResults.push(
+      runFamilyProtectionAgent(dataset, profiles, effectiveScale, hypotheticalScenario),
+    );
   }
 
-  if (agentsNeeded.includes('Smart Routine Agent')) {
-    let targetDate = dataset?.currentTimestamp.slice(0, 10);
-    if (targetDate && targetOffsetDays > 0) {
-      const base = new Date(`${targetDate}T00:00:00Z`);
-      base.setUTCDate(base.getUTCDate() + targetOffsetDays);
-      targetDate = base.toISOString().slice(0, 10);
-    }
-    const routineOut = runSmartRoutineAgent(dataset, activity, targetDate, preferredScale);
+  // Only schedule live hourly Open-Meteo windows when NOT evaluating a hypothetical AQI override
+  if (!hypotheticalScenario && effectiveAgents.includes('Smart Routine Agent')) {
+    const localNow = getLocalDateTimeContext({
+      timezone: dataset?.location.timezone,
+      utcOffsetSeconds: dataset?.utcOffsetSeconds,
+      referenceNowMs,
+    });
+    const targetDate = dataset
+      ? addDaysToIsoDate(localNow.localDate, targetOffsetDays)
+      : undefined;
+
+    const routineOut = runSmartRoutineAgent(dataset, activity, targetDate, effectiveScale, {
+      referenceNowMs,
+      autoAdvanceIfElapsed: targetOffsetDays === 0,
+    });
     routineWindows = routineOut.windows;
     specialistResults.push(routineOut.agentResult);
   }
 
-  if (agentsNeeded.includes('Sustainability Agent')) {
-    specialistResults.push(runSustainabilityAgent(dataset, preferredScale));
+  if (effectiveAgents.includes('Sustainability Agent')) {
+    specialistResults.push(
+      runSustainabilityAgent(dataset, effectiveScale, hypotheticalScenario),
+    );
   }
 
   const deterministicFallback = buildDeterministicFallbackExplanation({
     query,
     dataset,
     agentResults: specialistResults,
+    hypotheticalScenario,
+    effectiveScale,
   });
 
-  // Call Gemini synthesizer (single grounded LLM call) if provided & dataset is present
+  // Call Gemini synthesizer (single grounded LLM call) if provided & verified context exists
   let synthesis: SynthesizedExplanation;
-  if (synthesizer && dataset) {
+  if (synthesizer && (dataset || hypotheticalScenario)) {
     try {
       synthesis = await synthesizer({
         query,
         intent,
         dataset,
-        preferredScale,
+        preferredScale: effectiveScale,
         agentResults: specialistResults,
         profiles,
         routineWindows,
+        hypotheticalScenario,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Gemini synthesis failed';
@@ -232,12 +358,12 @@ export async function runVayuOrchestrator(params: {
     synthesis = deterministicFallback;
   }
 
-  // Verification Agent actively validates & corrects/rejects unsafe or ungrounded synthesis
+  // Verification Agent actively validates & corrects/rejects unsafe, ungrounded, expired-window, or location-mismatched synthesis
   const { enforcedSynthesis, verificationAgentResult, report: verificationReport } =
     verifyAndEnforceSynthesis({
       dataset,
       agentResults: specialistResults,
-      preferredScale,
+      preferredScale: effectiveScale,
       synthesis,
       fallback: {
         ...deterministicFallback,
@@ -245,6 +371,9 @@ export async function runVayuOrchestrator(params: {
         aiError: synthesis.aiError,
       },
       routineWindows,
+      hypotheticalScenario,
+      requestedLocation,
+      referenceNowMs,
     });
 
   const allAgentResults = [...specialistResults, verificationAgentResult];
@@ -265,6 +394,10 @@ export async function runVayuOrchestrator(params: {
       ? collectedEvidence
       : ['Live environmental dataset is currently unavailable; no sensor or model metrics could be verified.'];
 
+  const liveSnapshotNote = hypotheticalScenario
+    ? formatLiveReferenceNote(dataset, effectiveScale)
+    : undefined;
+
   return {
     requestId,
     intent,
@@ -274,12 +407,16 @@ export async function runVayuOrchestrator(params: {
     explanation: enforcedSynthesis.explanation,
     recommendedActions: enforcedSynthesis.recommendedActions,
     limitationsAndUncertainty: limitations,
-    dataSource: dataset
-      ? `${dataset.modelSource} & ${dataset.weatherSource} (Modelled Grid Forecast)`
-      : 'Unavailable',
-    dataTimestamp: dataset?.currentTimestamp ?? 'Unavailable',
+    dataSource: hypotheticalScenario
+      ? dataset
+        ? `Hypothetical Input (${hypotheticalScenario.scaleLabel} ${hypotheticalScenario.assumedAqi}) · Live Reference: ${dataset.modelSource}`
+        : `Hypothetical Scenario (${hypotheticalScenario.scaleLabel} ${hypotheticalScenario.assumedAqi})`
+      : dataset
+        ? `${dataset.modelSource} & ${dataset.weatherSource} (Modelled Grid Forecast)`
+        : 'Unavailable',
+    dataTimestamp: dataset?.currentTimestamp ?? (hypotheticalScenario ? 'Hypothetical Scenario' : 'Unavailable'),
     aqiScaleUsed:
-      preferredScale === 'european_aqi'
+      effectiveScale === 'european_aqi'
         ? 'European Air Quality Index (EU EAQI)'
         : 'US EPA Air Quality Index (US AQI)',
     agentsInvolved: allAgentResults.map((a) => a.agent_name),
@@ -287,5 +424,29 @@ export async function runVayuOrchestrator(params: {
     verification: verificationReport,
     aiSynthesized: enforcedSynthesis.aiSynthesized,
     aiError: enforcedSynthesis.aiError,
+    ...(hypotheticalScenario
+      ? {
+          isHypothetical: true,
+          hypotheticalScenario: {
+            assumedAqi: hypotheticalScenario.assumedAqi,
+            scale: hypotheticalScenario.scale,
+            scaleLabel: hypotheticalScenario.scaleLabel,
+            categoryLabel: hypotheticalScenario.category.label,
+            shortLabel: hypotheticalScenario.category.shortLabel,
+            liveSnapshotNote,
+          },
+        }
+      : {}),
+    ...(dataset
+      ? {
+          resolvedLocation: {
+            name: dataset.location.name,
+            country: dataset.location.country,
+            latitude: dataset.location.latitude,
+            longitude: dataset.location.longitude,
+            timezone: dataset.location.timezone,
+          },
+        }
+      : {}),
   };
 }

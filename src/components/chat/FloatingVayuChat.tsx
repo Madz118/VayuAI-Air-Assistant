@@ -135,7 +135,7 @@ export const FloatingVayuChat: React.FC = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollToLatest(distanceFromBottom > 64);
+    setShowScrollToLatest(distanceFromBottom > 96);
   };
 
   const handleCopy = async (msg: FloatingChatMessage) => {
@@ -223,7 +223,7 @@ export const FloatingVayuChat: React.FC = () => {
           aria-modal="false"
           aria-labelledby="vayu-floating-chat-title"
           data-testid="vayu-floating-chat-panel"
-          className="pointer-events-auto vayu-chat-panel-enter w-[min(404px,calc(100vw-1.5rem))] h-[min(590px,calc(100dvh-2rem))] sm:h-[min(600px,calc(100vh-3rem))] rounded-2xl border border-[#49E3D0]/25 bg-[#0B1928]/95 backdrop-blur-xl shadow-[0_22px_60px_rgba(2,8,18,0.78)] flex flex-col overflow-hidden"
+          className="pointer-events-auto vayu-chat-panel-enter w-[min(404px,calc(100vw-1.5rem))] h-[min(590px,calc(100dvh-2rem))] sm:h-[min(600px,calc(100vh-3rem))] rounded-2xl border border-[#49E3D0]/25 bg-[#0B1928]/[0.98] backdrop-blur-xl shadow-[0_22px_60px_rgba(2,8,18,0.82)] flex flex-col overflow-hidden"
         >
           {/* Header */}
           <header className="px-4 py-3 border-b border-white/10 bg-[#07111F]/90 flex items-center justify-between gap-2 shrink-0">
@@ -341,12 +341,33 @@ export const FloatingVayuChat: React.FC = () => {
                     </div>
 
                     <div className="max-w-[88%] rounded-2xl rounded-tl-sm border border-white/10 bg-[#102334]/95 p-3.5 space-y-2.5">
+                      {r?.isHypothetical && r.hypotheticalScenario && (
+                        <div
+                          data-testid="vayu-chat-hypothetical-badge"
+                          className="rounded-lg border border-amber-400/35 bg-amber-500/12 px-2.5 py-1.5 text-[11px] text-amber-200 flex items-center justify-between gap-2"
+                        >
+                          <span className="font-semibold uppercase tracking-wider">
+                            Hypothetical Scenario
+                          </span>
+                          <span className="font-mono font-semibold text-[#F2F7FA]">
+                            {r.hypotheticalScenario.assumedAqi} · {r.hypotheticalScenario.shortLabel}
+                          </span>
+                        </div>
+                      )}
+
                       <p className="text-sm text-[#F2F7FA] leading-relaxed">{msg.content}</p>
 
                       {r && (
                         <>
                           {r.explanation && (
                             <p className="text-xs text-[#B5C7D4] leading-relaxed">{r.explanation}</p>
+                          )}
+
+                          {r.isHypothetical && r.hypotheticalScenario?.liveSnapshotNote && (
+                            <p className="rounded-lg border border-white/10 bg-[#07111F]/70 px-2.5 py-1.5 text-[11px] text-[#9BB0C0] leading-relaxed">
+                              <strong className="text-[#E4EEF5]">Actual Live Conditions (reference):</strong>{' '}
+                              {r.hypotheticalScenario.liveSnapshotNote}
+                            </p>
                           )}
 
                           {r.recommendedActions.length > 0 && (
@@ -412,6 +433,7 @@ export const FloatingVayuChat: React.FC = () => {
                                 </span>
                               </div>
                               <div className="font-mono text-[10px] text-[#9BB0C0] break-words">
+                                {r.resolvedLocation ? `${r.resolvedLocation.name} · ` : ''}
                                 {r.dataSource} · {r.dataTimestamp}
                               </div>
                             </div>
@@ -493,7 +515,7 @@ export const FloatingVayuChat: React.FC = () => {
                 onClick={() => scrollToBottom(false)}
                 aria-label="Scroll to latest message"
                 data-testid="vayu-chat-scroll-latest"
-                className="absolute bottom-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full border border-[#49E3D0]/45 bg-[#07111F]/95 px-3 py-1.5 text-[11px] font-semibold text-[#49E3D0] shadow-lg hover:bg-[#102334] transition-colors"
+                className="absolute bottom-2.5 right-3 inline-flex items-center gap-1.5 rounded-full border border-[#49E3D0]/45 bg-[#07111F]/95 px-3 py-1.5 text-[11px] font-semibold text-[#49E3D0] shadow-lg hover:bg-[#102334] transition-colors"
               >
                 <ArrowDown className="w-3 h-3" aria-hidden="true" />
                 <span>Latest</span>

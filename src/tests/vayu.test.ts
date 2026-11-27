@@ -8,7 +8,9 @@ import { runVerificationAgent } from '../agents/verificationAgent.ts';
 import { DEFAULT_CITY } from '../config/constants.ts';
 import { classifyUserIntent, runVayuOrchestrator } from '../orchestrator/vayuOrchestrator.ts';
 import { CommunityStore } from '../services/communityStore.ts';
-import { normalizeOpenMeteoPayloads } from '../services/openMeteoClient.ts';
+import { normalizeOpenMeteoPayloads, resolveQueryCityLocation } from '../services/openMeteoClient.ts';
+import { parseHypotheticalScenario } from '../utils/hypotheticalScenario.ts';
+import { evaluateWindowTimeValidity, getLocalDateTimeContext } from '../utils/localTime.ts';
 import type { EnvironmentalDataset, HouseholdProfile, RoutineWindow } from '../types/airQuality.ts';
 import {
   buildPollutantBreakdown,
@@ -294,7 +296,10 @@ test('Smart Routine Agent uses EU EAQI thresholds when european_aqi is selected'
     ],
   });
 
-  const euRoutine = runSmartRoutineAgent(euElevatedDataset, 'outdoor_exercise', date, 'european_aqi');
+  const morningRefMs = Date.parse(`${date}T00:00:00+05:30`);
+  const euRoutine = runSmartRoutineAgent(euElevatedDataset, 'outdoor_exercise', date, 'european_aqi', {
+    referenceNowMs: morningRefMs,
+  });
   assert.equal(euRoutine.windows.length, 1);
   assert.equal(euRoutine.windows[0].suitability, 'limit_exposure');
   assert.ok(euRoutine.windows[0].rationale.includes('EU EAQI averages 48'));
@@ -328,11 +333,13 @@ test('Verification Agent validates individual forecast windows even when current
     },
   ];
 
+  const testDate = dataset.currentTimestamp.slice(0, 10);
   const v = runVerificationAgent({
     dataset,
     agentResults: [],
     preferredScale: 'us_aqi',
     routineWindows: brokenWindows,
+    referenceNowMs: Date.parse(`${testDate}T00:00:00+05:30`),
   });
 
   assert.equal(v.report.passed, false);
@@ -421,11 +428,13 @@ test('Stale, incomplete, or missing environmental data prevents confident recomm
   assert.equal(f.status, 'partial');
   assert.equal(f.recommendation.includes('Normal outdoor play'), false);
 
+  const staleDate = staleIncomplete.currentTimestamp.slice(0, 10);
   const r = runSmartRoutineAgent(
     staleIncomplete,
     'outdoor_exercise',
-    staleIncomplete.currentTimestamp.slice(0, 10),
+    staleDate,
     'us_aqi',
+    { referenceNowMs: Date.parse(`${staleDate}T00:00:00+05:30`) },
   );
   assert.equal(r.agentResult.confidence, 'low');
   assert.equal(r.agentResult.status, 'partial');
@@ -607,5 +616,223 @@ test('Floating chatbot helpers enforce input rules, privacy payload, welcome cop
   assert.ok(formatted.includes('1. Pace vigorous outdoor exercise.'));
   assert.ok(formatted.includes('Verification: Passed'));
 });
+
+test('Hypothetical AQI scenarios (30, 150, 250, 350) are parsed, preserved, separated from live AQI, and verified', async () => {
+  const liveGoodDataset = createSampleDataset({
+    current: {
+      ...createSampleDataset().current,
+      us_aqi: 38,
+      european_aqi: 18,
+    },
+  });
+
+  // Detection checks
+  const h30 = parseHypotheticalScenario('Assume the US AQI is 30. Is outdoor play fine?', 'us_aqi');
+  assert.equal(h30?.assumedAqi, 30);
+  assert.equal(h30?.category.level, 'good');
+
+  const h150 = parseHypotheticalScenario('Suppose Chennai AQI becomes 150.', 'us_aqi');
+  assert.equal(h150?.assumedAqi, 150);
+  assert.equal(h150?.category.level, 'sensitive');
+
+  const h250 = parseHypotheticalScenario('What should children and elderly people do if AQI is 250?', 'us_aqi');
+  assert.equal(h250?.assumedAqi, 250);
+  assert.equal(h250?.category.level, 'very_unhealthy');
+
+  const h350 = parseHypotheticalScenario('Assume the US AQI is 350 today.', 'us_aqi');
+  assert.equal(h350?.assumedAqi, 350);
+  assert.equal(h350?.category.level, 'hazardous');
+
+  // Orchestrator preserves 250 despite live AQI 38, and overrides LLM if LLM tries to report live 38 as the scenario
+  const overridden = await runVayuOrchestrator({
+    query: 'Assume US AQI is 250. What should children and elderly people do?',
+    dataset: liveGoodDataset,
+    profiles: [],
+    preferredScale: 'us_aqi',
+    synthesizer: async () => ({
+      directAnswer: 'Air quality is Good today with US AQI 38, great time to jog outdoors!',
+      explanation: 'Conditions are clean right now.',
+      recommendedActions: ['Children can play freely outdoors.'],
+      aiSynthesized: true,
+    }),
+  });
+
+  assert.equal(overridden.isHypothetical, true);
+  assert.equal(overridden.hypotheticalScenario?.assumedAqi, 250);
+  assert.equal(overridden.hypotheticalScenario?.shortLabel, 'Very Unhealthy');
+  assert.equal(overridden.verification.correctionApplied, true);
+  assert.ok(overridden.directAnswer.includes('HYPOTHETICAL SCENARIO'));
+  assert.ok(overridden.directAnswer.includes('250'));
+  assert.ok(overridden.explanation.includes('ACTUAL LIVE CONDITIONS'));
+  assert.equal(overridden.directAnswer.includes('great time to jog'), false);
+
+  // Deterministic fallback for US AQI 250 (when synthesizer throws) MUST pass VerificationAgent cleanly
+  const fallback250 = await runVayuOrchestrator({
+    query: 'Assume the US AQI is 250. What should children and elderly people do?',
+    dataset: liveGoodDataset,
+    profiles: [],
+    preferredScale: 'us_aqi',
+    synthesizer: async () => {
+      throw new Error('Simulated timeout');
+    },
+  });
+  assert.equal(fallback250.isHypothetical, true);
+  assert.equal(fallback250.aiSynthesized, false);
+  assert.equal(fallback250.verification.passed, true, `Expected verification.passed=true, got rejectedClaims=${JSON.stringify(fallback250.verification.rejectedClaims)}`);
+  assert.equal(fallback250.verification.rejectedClaims.length, 0);
+  assert.ok(fallback250.directAnswer.includes('HYPOTHETICAL SCENARIO'));
+  assert.ok(fallback250.directAnswer.includes('250'));
+
+  // Clean US AQI 350 Hazardous evaluation
+  const haz = await runVayuOrchestrator({
+    query: 'Assume the US AQI is 350. What should children and older adults do?',
+    dataset: liveGoodDataset,
+    profiles: [],
+    preferredScale: 'us_aqi',
+  });
+  assert.equal(haz.isHypothetical, true);
+  assert.equal(haz.hypotheticalScenario?.shortLabel, 'Hazardous');
+  assert.equal(haz.verification.passed, true);
+  assert.ok(haz.directAnswer.toLowerCase().includes('indoor'));
+});
+
+test('Strict future-window validation excludes elapsed slots at 20:00 local time and rolls over to next forecast day', () => {
+  const today = '2026-11-27';
+  const tomorrow = '2026-11-28';
+  const dataset = createSampleDataset({
+    currentTimestamp: `${today}T20:00`,
+    hourly: [
+      // Today's slots (all elapsed or <90m remaining at 20:00 IST)
+      ...[6, 9, 12, 15, 18].map((hr) => ({
+        time: `${today}T${String(hr).padStart(2, '0')}:00`,
+        us_aqi: hr === 6 ? 25 : 85, // 06:00 is lowest today, MUST NOT be recommended at 20:00!
+        european_aqi: 30,
+        pm2_5: 15,
+        pm10: 30,
+        nitrogen_dioxide: 15,
+        ozone: 40,
+        sulphur_dioxide: 4,
+        carbon_monoxide: 300,
+        temperature_2m: 28,
+        relative_humidity_2m: 70,
+        wind_speed_10m: 12,
+        weather_code: 1,
+      })),
+      // Tomorrow's slots
+      ...[6, 9, 15].map((hr) => ({
+        time: `${tomorrow}T${String(hr).padStart(2, '0')}:00`,
+        us_aqi: hr === 6 ? 42 : 76,
+        european_aqi: 20,
+        pm2_5: 12,
+        pm10: 25,
+        nitrogen_dioxide: 12,
+        ozone: 35,
+        sulphur_dioxide: 3,
+        carbon_monoxide: 260,
+        temperature_2m: 26,
+        relative_humidity_2m: 74,
+        wind_speed_10m: 11,
+        weather_code: 1,
+      })),
+    ],
+  });
+
+  // 20:00 IST = 14:30 UTC
+  const at2000Ist = Date.parse(`${today}T20:00:00+05:30`);
+  const localNow = getLocalDateTimeContext({
+    timezone: 'Asia/Kolkata',
+    utcOffsetSeconds: 19800,
+    referenceNowMs: at2000Ist,
+  });
+  assert.equal(localNow.localDate, today);
+  assert.equal(localNow.localTimeLabel, '20:00');
+  assert.equal(evaluateWindowTimeValidity(`${today}T06:00`, `${today}T09:00`, localNow, 90).isValid, false);
+  assert.equal(evaluateWindowTimeValidity(`${today}T18:00`, `${today}T21:00`, localNow, 90).isValid, false);
+
+  // Explicit today check returns 0 windows + excludedPastCount = 5
+  const explicitToday = runSmartRoutineAgent(dataset, 'outdoor_exercise', today, 'us_aqi', {
+    referenceNowMs: at2000Ist,
+    autoAdvanceIfElapsed: false,
+  });
+  assert.equal(explicitToday.windows.length, 0);
+  assert.equal(explicitToday.excludedPastCount, 5);
+
+  // Auto-rollover to tomorrow yields tomorrow's upcoming slots only, with date+time in observations
+  const autoRollover = runSmartRoutineAgent(dataset, 'outdoor_exercise', today, 'us_aqi', {
+    referenceNowMs: at2000Ist,
+    autoAdvanceIfElapsed: true,
+  });
+  assert.equal(autoRollover.resolvedDate, tomorrow);
+  assert.equal(autoRollover.rolledOverFromDate, today);
+  assert.ok(autoRollover.windows.length > 0);
+  assert.ok(autoRollover.windows.every((w) => w.startTime.startsWith(tomorrow)));
+  assert.ok(autoRollover.agentResult.recommendation.includes(tomorrow));
+
+  // VerificationAgent catches elapsed windows if anyone passes a past slot
+  const pastCheck = runVerificationAgent({
+    dataset,
+    agentResults: [],
+    preferredScale: 'us_aqi',
+    routineWindows: [
+      {
+        startTime: `${today}T06:00`,
+        endTime: `${today}T09:00`,
+        avgUsAqi: 25,
+        avgEuAqi: 12,
+        avgPm25: 8,
+        avgTempC: 25,
+        avgWindKmh: 10,
+        weatherLabel: 'Clear sky',
+        suitability: 'favorable',
+        suitabilityLabel: 'Favorable Window',
+        rationale: 'Past',
+        alternativeAction: 'None',
+      },
+    ],
+    referenceNowMs: at2000Ist,
+  });
+  assert.equal(pastCheck.report.passed, false);
+  assert.ok(pastCheck.report.rejectedClaims.some((c) => c.includes('already elapsed')));
+});
+
+test('Location consistency resolves explicit query city and VerificationAgent flags coordinate mismatch', async () => {
+  const newDelhi = {
+    id: 'delhi-in',
+    name: 'New Delhi',
+    country: 'India',
+    latitude: 28.6139,
+    longitude: 77.209,
+    timezone: 'Asia/Kolkata',
+  };
+
+  // Query explicitly asking about Chennai while New Delhi is selected MUST resolve Chennai coordinates
+  const resolvedChennai = await resolveQueryCityLocation(
+    'What is the current air quality in Chennai?',
+    newDelhi,
+  );
+  assert.equal(resolvedChennai.explicitCityRequested, true);
+  assert.equal(resolvedChennai.location?.name, 'Chennai');
+  assert.equal(resolvedChennai.location?.latitude, DEFAULT_CITY.latitude);
+  assert.equal(resolvedChennai.location?.longitude, DEFAULT_CITY.longitude);
+
+  // Generic query without city name MUST preserve selected location (New Delhi)
+  const preservedDelhi = await resolveQueryCityLocation('Best time to go outside', newDelhi);
+  assert.equal(preservedDelhi.explicitCityRequested, false);
+  assert.equal(preservedDelhi.location?.name, 'New Delhi');
+  assert.equal(preservedDelhi.location?.latitude, 28.6139);
+
+  // VerificationAgent rejects response if returned dataset coordinates mismatch requested New Delhi
+  const mismatchedVerification = runVerificationAgent({
+    dataset: createSampleDataset({ location: DEFAULT_CITY }), // Chennai dataset
+    agentResults: [],
+    preferredScale: 'us_aqi',
+    requestedLocation: newDelhi,
+  });
+  assert.equal(mismatchedVerification.report.passed, false);
+  assert.ok(
+    mismatchedVerification.report.rejectedClaims.some((c) => c.includes('location mismatch')),
+  );
+});
+
 
 

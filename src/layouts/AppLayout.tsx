@@ -16,6 +16,7 @@ import {
   Wind,
   X,
 } from 'lucide-react';
+import { useFloatingChat } from '../context/FloatingChatContext.tsx';
 import { useVayu } from '../context/VayuContext.tsx';
 import { CitySearchModal } from '../components/common/CitySearchModal.tsx';
 import { NotificationsPanel } from '../components/common/NotificationsPanel.tsx';
@@ -23,14 +24,18 @@ import { PreferencesModal } from '../components/common/PreferencesModal.tsx';
 import { VayuWindScene } from '../components/three/VayuWindScene.tsx';
 import { useModalFocusTrap } from '../utils/useModalFocusTrap.ts';
 
-const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Air Dashboard', icon: Activity },
-  { to: '/map', label: 'Pollution Map', icon: MapIcon },
-  { to: '/ask', label: 'Ask VAYU AI', icon: MessageSquareText },
-  { to: '/planner', label: 'Routine Planner', icon: CalendarClock },
-  { to: '/family', label: 'Family Protection', icon: Shield },
-  { to: '/community', label: 'Sustainability', icon: Leaf },
-  { to: '/about', label: 'Methodology', icon: BookOpen },
+type NavItem =
+  | { kind: 'route'; to: string; label: string; icon: typeof Activity }
+  | { kind: 'chat'; id: 'ask-vayu'; label: string; icon: typeof Activity };
+
+const NAV_ITEMS: NavItem[] = [
+  { kind: 'route', to: '/dashboard', label: 'Air Dashboard', icon: Activity },
+  { kind: 'route', to: '/map', label: 'Pollution Map', icon: MapIcon },
+  { kind: 'chat', id: 'ask-vayu', label: 'Ask VAYU AI', icon: MessageSquareText },
+  { kind: 'route', to: '/planner', label: 'Routine Planner', icon: CalendarClock },
+  { kind: 'route', to: '/family', label: 'Family Protection', icon: Shield },
+  { kind: 'route', to: '/community', label: 'Sustainability', icon: Leaf },
+  { kind: 'route', to: '/about', label: 'Methodology', icon: BookOpen },
 ];
 
 export const AppLayout: React.FC = () => {
@@ -45,6 +50,7 @@ export const AppLayout: React.FC = () => {
     notifications,
     dismissNotification,
   } = useVayu();
+  const { isOpen: isChatOpen, openChat } = useFloatingChat();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [cityModalOpen, setCityModalOpen] = useState(false);
@@ -99,6 +105,25 @@ export const AppLayout: React.FC = () => {
         <nav aria-label="Primary navigation" className="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
+            if (item.kind === 'chat') {
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={openChat}
+                  aria-pressed={isChatOpen}
+                  data-testid="sidebar-ask-vayu-btn"
+                  className={`w-full flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors whitespace-nowrap text-left ${
+                    isChatOpen
+                      ? 'bg-[#16C7B0]/15 text-[#49E3D0] border border-[#49E3D0]/30'
+                      : 'text-[#B5C7D4] hover:bg-white/5 hover:text-[#F2F7FA] border border-transparent'
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            }
             return (
               <NavLink
                 key={item.to}
@@ -171,6 +196,28 @@ export const AppLayout: React.FC = () => {
             <nav aria-label="Mobile navigation" className="flex-1 p-3 space-y-1 overflow-y-auto">
               {NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
+                if (item.kind === 'chat') {
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        openChat();
+                      }}
+                      aria-pressed={isChatOpen}
+                      data-testid="mobile-ask-vayu-btn"
+                      className={`w-full flex items-center gap-3 rounded-xl px-3.5 py-3 min-h-[44px] text-sm font-medium text-left ${
+                        isChatOpen
+                          ? 'bg-[#16C7B0]/15 text-[#49E3D0] border border-[#49E3D0]/30'
+                          : 'text-[#B5C7D4] hover:bg-white/5 hover:text-[#F2F7FA]'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                }
                 return (
                   <NavLink
                     key={item.to}

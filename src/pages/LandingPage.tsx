@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { VayuWindScene } from '../components/three/VayuWindScene.tsx';
+import { useFloatingChat } from '../context/FloatingChatContext.tsx';
 import { useVayu } from '../context/VayuContext.tsx';
 import { interpretAqiCategory } from '../utils/aqi.ts';
 import { useModalFocusTrap } from '../utils/useModalFocusTrap.ts';
@@ -22,6 +23,7 @@ import { AqiScaleBadge } from '../components/common/AqiScaleBadge.tsx';
 
 export const LandingPage: React.FC = () => {
   const { dataset, preferences, location } = useVayu();
+  const { openChat } = useFloatingChat();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuBtnRef = useRef<HTMLButtonElement | null>(null);
   const mobileDrawerRef = useRef<HTMLElement | null>(null);
@@ -112,9 +114,13 @@ export const LandingPage: React.FC = () => {
             <Link to="/map" className="hover:text-[#F2F7FA] transition-colors whitespace-nowrap shrink-0">
               Pollution Map
             </Link>
-            <Link to="/ask" className="hover:text-[#F2F7FA] transition-colors whitespace-nowrap shrink-0">
+            <button
+              type="button"
+              onClick={openChat}
+              className="hover:text-[#F2F7FA] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
               Ask VAYU
-            </Link>
+            </button>
             <Link to="/about" className="hover:text-[#F2F7FA] transition-colors whitespace-nowrap shrink-0">
               Methodology
             </Link>
@@ -169,21 +175,35 @@ export const LandingPage: React.FC = () => {
               {[
                 { to: '/dashboard', label: 'Air Dashboard' },
                 { to: '/map', label: 'Pollution Map' },
-                { to: '/ask', label: 'Ask VAYU AI' },
+                { to: '#ask-vayu', label: 'Ask VAYU AI', isChat: true },
                 { to: '/planner', label: 'Routine Planner' },
                 { to: '/family', label: 'Family Protection' },
                 { to: '/community', label: 'Sustainability & Community' },
                 { to: '/about', label: 'Methodology' },
-              ].map((link) => (
-                <Link
-                  key={link.to}
-                  to={link.to}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="flex items-center rounded-xl px-3.5 py-3 min-h-[44px] text-sm font-medium text-[#B5C7D4] hover:bg-white/5 hover:text-[#F2F7FA]"
-                >
-                  {link.label}
-                </Link>
-              ))}
+              ].map((link) =>
+                link.isChat ? (
+                  <button
+                    key={link.label}
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      openChat();
+                    }}
+                    className="w-full flex items-center rounded-xl px-3.5 py-3 min-h-[44px] text-sm font-medium text-[#B5C7D4] hover:bg-white/5 hover:text-[#F2F7FA] text-left"
+                  >
+                    {link.label}
+                  </button>
+                ) : (
+                  <Link
+                    key={link.to}
+                    to={link.to}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center rounded-xl px-3.5 py-3 min-h-[44px] text-sm font-medium text-[#B5C7D4] hover:bg-white/5 hover:text-[#F2F7FA]"
+                  >
+                    {link.label}
+                  </Link>
+                ),
+              )}
             </nav>
           </aside>
         </div>
@@ -212,13 +232,15 @@ export const LandingPage: React.FC = () => {
                 <span>Explore Air Quality</span>
                 <ArrowRight className="w-4 h-4" aria-hidden="true" />
               </Link>
-              <Link
-                to="/ask"
-                className="inline-flex items-center gap-2.5 rounded-xl border border-white/15 bg-[#102334]/90 px-6 py-3.5 text-sm font-semibold text-[#F2F7FA] hover:border-[#49E3D0]/50 transition-colors whitespace-nowrap"
+              <button
+                type="button"
+                onClick={openChat}
+                data-testid="landing-meet-assistant-btn"
+                className="inline-flex items-center gap-2.5 rounded-xl border border-white/15 bg-[#102334]/90 px-6 py-3.5 text-sm font-semibold text-[#F2F7FA] hover:border-[#49E3D0]/50 transition-colors whitespace-nowrap cursor-pointer"
               >
                 <MessageSquareText className="w-4 h-4 text-[#49E3D0]" aria-hidden="true" />
                 <span>Meet Your AI Assistant</span>
-              </Link>
+              </button>
             </div>
 
             <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[#9BB0C0]">
@@ -461,12 +483,13 @@ export const LandingPage: React.FC = () => {
             >
               Launch Air Dashboard
             </Link>
-            <Link
-              to="/ask"
-              className="rounded-xl border border-white/15 bg-[#102334] px-6 py-3 text-sm font-semibold text-[#F2F7FA] hover:border-[#49E3D0]/40 transition-colors"
+            <button
+              type="button"
+              onClick={openChat}
+              className="rounded-xl border border-white/15 bg-[#102334] px-6 py-3 text-sm font-semibold text-[#F2F7FA] hover:border-[#49E3D0]/40 transition-colors cursor-pointer"
             >
               Ask VAYU AI
-            </Link>
+            </button>
           </div>
         </div>
       </section>
@@ -479,7 +502,7 @@ export const LandingPage: React.FC = () => {
           <div className="flex flex-wrap items-center gap-4">
             <Link to="/dashboard" className="hover:text-[#F2F7FA]">Dashboard</Link>
             <Link to="/map" className="hover:text-[#F2F7FA]">Map</Link>
-            <Link to="/ask" className="hover:text-[#F2F7FA]">Ask VAYU</Link>
+            <button type="button" onClick={openChat} className="hover:text-[#F2F7FA] cursor-pointer">Ask VAYU</button>
             <Link to="/planner" className="hover:text-[#F2F7FA]">Planner</Link>
             <Link to="/about" className="hover:text-[#F2F7FA]">Methodology</Link>
           </div>

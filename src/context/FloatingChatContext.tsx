@@ -36,7 +36,7 @@ interface FloatingChatContextValue {
 
 const FloatingChatContext = createContext<FloatingChatContextValue | null>(null);
 
-const REQUEST_TIMEOUT_MS = 25_000;
+const REQUEST_TIMEOUT_MS = 35_000;
 
 export function FloatingChatProvider({ children }: { children: React.ReactNode }) {
   const { location, preferences } = useVayu();
@@ -53,6 +53,16 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
   const activeAbortRef = useRef<AbortController | null>(null);
   const sessionEpochRef = useRef(0);
   const isOpenRef = useRef(isOpen);
+  const locationRef = useRef(location);
+  const preferredScaleRef = useRef(preferences.preferredScale);
+
+  useEffect(() => {
+    locationRef.current = location;
+  }, [location]);
+
+  useEffect(() => {
+    preferredScaleRef.current = preferences.preferredScale;
+  }, [preferences.preferredScale]);
 
   useEffect(() => {
     isOpenRef.current = isOpen;
@@ -136,8 +146,8 @@ export function FloatingChatProvider({ children }: { children: React.ReactNode }
       try {
         const payload = buildFloatingChatPayload({
           query: cleanedQuery,
-          location,
-          preferredScale: preferences.preferredScale,
+          location: locationRef.current,
+          preferredScale: preferredScaleRef.current,
         });
 
         const res = await fetch('/api/ask', {

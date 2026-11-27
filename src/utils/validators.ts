@@ -56,32 +56,35 @@ export function validateCoordinates(lat: unknown, lon: unknown): {
 
 export function validateLocationInput(
   input: unknown,
-  fallback: CityLocation,
+  fallback: CityLocation | null,
 ): {
   valid: boolean;
   location?: Partial<CityLocation>;
   error?: string;
 } {
   if (input === undefined || input === null) {
+    if (!fallback) {
+      return { valid: false, error: 'Please select a location before requesting air quality analysis.' };
+    }
     return { valid: true, location: fallback };
   }
   if (typeof input !== 'object' || Array.isArray(input)) {
     return { valid: false, error: 'Location must be an object with valid coordinates.' };
   }
   const obj = input as Record<string, unknown>;
-  const latRaw = obj.latitude !== undefined ? obj.latitude : fallback.latitude;
-  const lonRaw = obj.longitude !== undefined ? obj.longitude : fallback.longitude;
-  const coords = validateCoordinates(latRaw, lonRaw);
+  const coords = validateCoordinates(obj.latitude, obj.longitude);
   if (!coords.valid || coords.latitude === undefined || coords.longitude === undefined) {
-    return { valid: false, error: coords.error };
+    return { valid: false, error: coords.error ?? 'Location must include valid latitude and longitude.' };
   }
 
+  const cleanName = typeof obj.name === 'string' ? sanitizePlainText(obj.name, 80) : '';
   const name =
-    typeof obj.name === 'string' && sanitizePlainText(obj.name, 80).length > 0
-      ? sanitizePlainText(obj.name, 80)
-      : fallback.name;
+    cleanName.length > 0
+      ? cleanName
+      : fallback?.name ?? `Coordinates (${coords.latitude.toFixed(3)}, ${coords.longitude.toFixed(3)})`;
   const country = typeof obj.country === 'string' ? sanitizePlainText(obj.country, 60) : '';
   const region = typeof obj.region === 'string' ? sanitizePlainText(obj.region, 60) : undefined;
+  const timezone = typeof obj.timezone === 'string' ? sanitizePlainText(obj.timezone, 60) : undefined;
   const id =
     typeof obj.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(obj.id) ? obj.id : undefined;
 
@@ -92,6 +95,7 @@ export function validateLocationInput(
       name,
       country,
       region,
+      timezone,
       latitude: coords.latitude,
       longitude: coords.longitude,
     },

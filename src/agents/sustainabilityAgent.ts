@@ -1,10 +1,12 @@
 import { interpretAqiCategory } from '../utils/aqi.ts';
+import type { HypotheticalScenario } from '../utils/hypotheticalScenario.ts';
 import { calculateTransparentCommuteComparison } from '../utils/sustainabilityCalc.ts';
 import type { AgentResult, AqiScale, EnvironmentalDataset } from '../types/airQuality.ts';
 
 export function runSustainabilityAgent(
   dataset: EnvironmentalDataset | null,
   preferredScale: AqiScale = 'us_aqi',
+  hypotheticalScenario: HypotheticalScenario | null = null,
 ): AgentResult {
   const sampleCalc = calculateTransparentCommuteComparison({
     distanceKm: 8,
@@ -13,7 +15,7 @@ export function runSustainabilityAgent(
     tripsPerWeek: 4,
   });
 
-  if (!dataset) {
+  if (!dataset && !hypotheticalScenario) {
     return {
       agent_name: 'Sustainability Agent',
       status: 'partial',
@@ -29,18 +31,25 @@ export function runSustainabilityAgent(
     };
   }
 
-  const primaryAqi = preferredScale === 'european_aqi' ? dataset.current.european_aqi : dataset.current.us_aqi;
-  const cat = interpretAqiCategory(primaryAqi, preferredScale);
+  const cat = hypotheticalScenario
+    ? hypotheticalScenario.category
+    : interpretAqiCategory(
+        preferredScale === 'european_aqi' ? dataset!.current.european_aqi : dataset!.current.us_aqi,
+        preferredScale,
+      );
   const degradedConfidence =
-    cat.level === 'unknown' || dataset.isStale || dataset.completenessRatio < 0.6;
+    !hypotheticalScenario &&
+    Boolean(dataset) &&
+    (cat.level === 'unknown' || dataset!.isStale || dataset!.completenessRatio < 0.6);
   const activeTravelSafe = !degradedConfidence && (cat.level === 'good' || cat.level === 'moderate');
+  const scenarioPrefix = hypotheticalScenario ? 'HYPOTHETICAL SCENARIO: ' : '';
 
   const observations: string[] = [
     degradedConfidence
-      ? `Environmental data is ${cat.level === 'unknown' ? 'unavailable' : dataset.isStale ? 'stale' : 'incomplete'}; active outdoor cycling/walking endorsement is withheld pending fresh readings.`
+      ? `Environmental data is ${cat.level === 'unknown' ? 'unavailable' : dataset?.isStale ? 'stale' : 'incomplete'}; active outdoor cycling/walking endorsement is withheld pending fresh readings.`
       : activeTravelSafe
-        ? `Current ${cat.label} (${cat.value}) permits low-emission walking or cycling on low-traffic side streets.`
-        : `Current ${cat.label} (${cat.value}) is elevated; enclosed public transit (metro/rail/filtered bus) is preferable over high-exertion roadside cycling today.`,
+        ? `${scenarioPrefix}${cat.label} (${cat.value}) permits low-emission walking or cycling on low-traffic side streets.`
+        : `${scenarioPrefix}${cat.label} (${cat.value}) is elevated; enclosed public transit (metro/rail/filtered bus) is preferable over high-exertion roadside cycling.`,
     `Transparent reference calculation: shifting 4 weekly 8 km solo-car trips to urban metro/rail reduces estimated emissions by ~${sampleCalc.weeklyDeltaKgCo2e} kg CO2e/week (~${sampleCalc.annualDeltaKgCo2e} kg/year).`,
   ];
 
@@ -67,10 +76,10 @@ export function runSustainabilityAgent(
     observations,
     recommendation: recommendations.join(' '),
     evidence: [
-      `Ambient gating check: ${cat.label} = ${cat.value ?? 'N/A'}`,
+      `${hypotheticalScenario ? 'Scenario' : 'Ambient'} gating check: ${cat.label} = ${cat.value ?? 'N/A'}`,
       ...sampleCalc.assumptions.slice(0, 3),
     ],
-    data_timestamp: dataset.currentTimestamp,
+    data_timestamp: dataset?.currentTimestamp ?? 'Hypothetical Scenario',
     confidence: degradedConfidence ? 'low' : 'high',
     limitations,
   };

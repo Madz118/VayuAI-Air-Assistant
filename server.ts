@@ -17,6 +17,7 @@ import { synthesizeVayuResponse } from './src/services/geminiService.ts';
 import {
   fetchEnvironmentalDataset,
   fetchLocalForecastGrid,
+  resolveQueryCityLocation,
   searchCities,
 } from './src/services/openMeteoClient.ts';
 import { SlidingWindowRateLimiter } from './src/utils/rateLimiter.ts';
@@ -192,9 +193,22 @@ app.post('/api/ask', async (req, res) => {
       return res.status(400).json({ error: scaleCheck.error });
     }
 
-    const locCheck = validateLocationInput(req.body.location, DEFAULT_CITY);
-    if (!locCheck.valid || !locCheck.location) {
+    const hasClientLocation = req.body.location !== undefined && req.body.location !== null;
+    const locCheck = hasClientLocation
+      ? validateLocationInput(req.body.location, null)
+      : { valid: true, location: undefined };
+    if (!locCheck.valid) {
       return res.status(400).json({ error: locCheck.error });
+    }
+
+    const resolvedQueryLoc = await resolveQueryCityLocation(query, locCheck.location ?? null);
+    if (resolvedQueryLoc.unresolvedError) {
+      return res.status(400).json({ error: resolvedQueryLoc.unresolvedError });
+    }
+    if (!resolvedQueryLoc.location) {
+      return res.status(400).json({
+        error: 'Please select a location before asking about local air quality conditions.',
+      });
     }
 
     const profileCheck = validateHouseholdProfiles(req.body.profiles);
@@ -204,7 +218,7 @@ app.post('/api/ask', async (req, res) => {
 
     let dataset = null;
     try {
-      dataset = await fetchEnvironmentalDataset(locCheck.location);
+      dataset = await fetchEnvironmentalDataset(resolvedQueryLoc.location);
     } catch {
       dataset = null;
     }
@@ -215,6 +229,7 @@ app.post('/api/ask', async (req, res) => {
       profiles: profileCheck.profiles,
       preferredScale: scaleCheck.scale,
       synthesizer: synthesizeVayuResponse,
+      requestedLocation: resolvedQueryLoc.location,
     });
 
     return res.json(result);
@@ -245,7 +260,7 @@ app.post('/api/routine-plan', async (req, res) => {
       return res.status(400).json({ error: dateCheck.error });
     }
 
-    const locCheck = validateLocationInput(req.body.location, DEFAULT_CITY);
+    const locCheck = validateLocationInput(req.body.location, null);
     if (!locCheck.valid || !locCheck.location) {
       return res.status(400).json({ error: locCheck.error });
     }
@@ -256,6 +271,7 @@ app.post('/api/routine-plan', async (req, res) => {
       activityCheck.activity,
       dateCheck.date,
       scaleCheck.scale,
+      { autoAdvanceIfElapsed: !dateCheck.date },
     );
     const { agentResult: verificationAgentResult, report: verification } = runVerificationAgent({
       dataset,
@@ -263,6 +279,7 @@ app.post('/api/routine-plan', async (req, res) => {
       preferredScale: scaleCheck.scale,
       draftAnswer: routine.agentResult.recommendation,
       routineWindows: routine.windows,
+      requestedLocation: locCheck.location,
     });
 
     const actMeta = ACTIVITIES_META.find((a) => a.id === activityCheck.activity) ?? ACTIVITIES_META[0];
@@ -284,6 +301,9 @@ app.post('/api/routine-plan', async (req, res) => {
       verification,
       dataTimestamp: dataset.currentTimestamp,
       dataSource: `${dataset.modelSource} & ${dataset.weatherSource}`,
+      localTimeLabel: routine.localTimeLabel,
+      excludedPastCount: routine.excludedPastCount,
+      rolledOverFromDate: routine.rolledOverFromDate,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to build routine plan.';

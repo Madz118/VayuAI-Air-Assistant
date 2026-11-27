@@ -3,12 +3,73 @@ import {
   identifyDominantPollutant,
   interpretAqiCategory,
 } from '../utils/aqi.ts';
+import type { HypotheticalScenario } from '../utils/hypotheticalScenario.ts';
 import type { AgentResult, AqiScale, EnvironmentalDataset } from '../types/airQuality.ts';
 
 export function runPollutionIntelligenceAgent(
   dataset: EnvironmentalDataset | null,
   preferredScale: AqiScale = 'us_aqi',
+  hypotheticalScenario: HypotheticalScenario | null = null,
 ): AgentResult {
+  if (hypotheticalScenario) {
+    const cat = hypotheticalScenario.category;
+    const liveScale = hypotheticalScenario.scale;
+    const liveAqi = dataset
+      ? liveScale === 'european_aqi'
+        ? dataset.current.european_aqi
+        : dataset.current.us_aqi
+      : null;
+    const liveCat = interpretAqiCategory(liveAqi, liveScale);
+
+    const observations: string[] = [
+      `HYPOTHETICAL SCENARIO: Evaluating assumed ${cat.label} of ${hypotheticalScenario.assumedAqi} (${cat.shortLabel}).`,
+    ];
+
+    if (dataset) {
+      observations.push(
+        `ACTUAL LIVE CONDITIONS (for reference only — not used as the scenario AQI): ${dataset.location.name}${dataset.location.country ? `, ${dataset.location.country}` : ''} currently models ${liveCat.label} of ${liveCat.value ?? 'unavailable'} (${liveCat.shortLabel}) at ${dataset.currentTimestamp}.`,
+      );
+    }
+
+    let recommendation = '';
+    if (cat.level === 'good') {
+      recommendation = `HYPOTHETICAL SCENARIO (${cat.label} ${hypotheticalScenario.assumedAqi} — Good): At this assumed level, ambient air quality is satisfactory for normal outdoor activity across the general public.`;
+    } else if (cat.level === 'moderate') {
+      recommendation = `HYPOTHETICAL SCENARIO (${cat.label} ${hypotheticalScenario.assumedAqi} — Moderate): Acceptable for most people, though unusually sensitive individuals should pace prolonged vigorous outdoor exertion.`;
+    } else if (cat.level === 'sensitive') {
+      recommendation = `HYPOTHETICAL SCENARIO (${cat.label} ${hypotheticalScenario.assumedAqi} — ${cat.shortLabel}): Sensitive groups (children, older adults, and people with respiratory sensitivities) should reduce prolonged or vigorous outdoor exertion.`;
+    } else if (cat.level === 'unhealthy') {
+      recommendation = `HYPOTHETICAL SCENARIO (${cat.label} ${hypotheticalScenario.assumedAqi} — Unhealthy): Everyone may experience respiratory irritation; shift strenuous outdoor activity indoors and limit prolonged outdoor exposure.`;
+    } else if (cat.level === 'very_unhealthy') {
+      recommendation = `HYPOTHETICAL SCENARIO (${cat.label} ${hypotheticalScenario.assumedAqi} — Very Unhealthy): Health alert conditions. Everyone should avoid prolonged or heavy outdoor exertion and remain indoors with filtered air where possible.`;
+    } else {
+      recommendation = `HYPOTHETICAL SCENARIO (${cat.label} ${hypotheticalScenario.assumedAqi} — Hazardous): Emergency exposure conditions. Avoid all outdoor physical exertion, keep windows sealed, and run indoor HEPA filtration.`;
+    }
+
+    const evidence = [
+      `Hypothetical AQI Input: ${hypotheticalScenario.scaleLabel} = ${hypotheticalScenario.assumedAqi} (${cat.shortLabel})`,
+      ...(dataset
+        ? [
+            `Actual Live Reference (${dataset.location.name}): ${liveCat.label} = ${liveCat.value ?? 'N/A'} at ${dataset.currentTimestamp}`,
+          ]
+        : ['Actual Live Reference: Unavailable']),
+    ];
+
+    return {
+      agent_name: 'Pollution Intelligence Agent',
+      status: 'completed',
+      observations,
+      recommendation,
+      evidence,
+      data_timestamp: dataset?.currentTimestamp ?? 'Hypothetical Scenario',
+      confidence: 'high',
+      limitations: [
+        `Evaluation is driven by your hypothetical assumed value (${hypotheticalScenario.scaleLabel} ${hypotheticalScenario.assumedAqi}), not live ambient sensor or CAMS grid readings.`,
+        'Single-hour or assumed AQI bands summarize general risk tiers and do not reflect pollutant-specific chemical composition unless measured.',
+      ],
+    };
+  }
+
   if (!dataset) {
     return {
       agent_name: 'Pollution Intelligence Agent',
@@ -29,7 +90,7 @@ export function runPollutionIntelligenceAgent(
   const scaleName = preferredScale === 'european_aqi' ? 'EU EAQI' : 'US AQI';
 
   const observations: string[] = [
-    `Current modelled ${cat.label} is ${cat.value ?? 'unavailable'} (${cat.shortLabel}) at ${dataset.location.name}, ${dataset.location.country}.`,
+    `Current modelled ${cat.label} is ${cat.value ?? 'unavailable'} (${cat.shortLabel}) at ${dataset.location.name}${dataset.location.country ? `, ${dataset.location.country}` : ''}.`,
     `Dominant pollutant (1h screening ratio vs WHO reference): ${dominant.symbol} (${dominant.rationale})`,
   ];
 
@@ -66,6 +127,7 @@ export function runPollutionIntelligenceAgent(
   }
 
   const evidence: string[] = [
+    `Location: ${dataset.location.name} (${dataset.location.latitude.toFixed(4)}, ${dataset.location.longitude.toFixed(4)})`,
     `Source: ${dataset.modelSource} (CAMS regional/global atmospheric model grid, not a physical ground station)`,
     `Timestamp: ${dataset.currentTimestamp} (data age: ${dataset.dataAgeMinutes}m)`,
     `Completeness: ${Math.round(dataset.completenessRatio * 100)}% of core pollutant metrics present`,

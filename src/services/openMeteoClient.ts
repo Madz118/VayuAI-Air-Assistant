@@ -53,7 +53,7 @@ function numAt(arr: unknown, idx: number): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Response> {
+async function fetchWithTimeout(url: string, timeoutMs = 6500): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -208,6 +208,7 @@ export function normalizeOpenMeteoPayloads(params: {
       ...location,
       timezone: typeof aqPayload.timezone === 'string' ? aqPayload.timezone : location.timezone,
     },
+    utcOffsetSeconds: utcOffsetSec,
     fetchedAt: new Date(nowMs).toISOString(),
     currentTimestamp: currentPoint.time,
     modelSource: 'Open-Meteo Air Quality API (CAMS Atmospheric Forecast)',
@@ -226,8 +227,8 @@ export function normalizeOpenMeteoPayloads(params: {
 }
 
 export async function fetchEnvironmentalDataset(locationInput?: Partial<CityLocation>): Promise<EnvironmentalDataset> {
-  const latRaw = locationInput?.latitude ?? DEFAULT_CITY.latitude;
-  const lonRaw = locationInput?.longitude ?? DEFAULT_CITY.longitude;
+  const latRaw = locationInput ? locationInput.latitude : DEFAULT_CITY.latitude;
+  const lonRaw = locationInput ? locationInput.longitude : DEFAULT_CITY.longitude;
   const coords = validateCoordinates(latRaw, lonRaw);
   if (!coords.valid || coords.latitude === undefined || coords.longitude === undefined) {
     throw new Error(coords.error ?? 'Invalid location coordinates.');
@@ -235,7 +236,14 @@ export async function fetchEnvironmentalDataset(locationInput?: Partial<CityLoca
 
   const lat = Math.round(coords.latitude * 10000) / 10000;
   const lon = Math.round(coords.longitude * 10000) / 10000;
-  const cacheKey = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+  const cacheKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+
+  const resolvedName =
+    locationInput?.name && locationInput.name.trim().length > 0
+      ? locationInput.name.trim()
+      : locationInput === undefined
+        ? DEFAULT_CITY.name
+        : `Coordinates (${lat.toFixed(3)}, ${lon.toFixed(3)})`;
 
   const cached = aqCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -243,9 +251,11 @@ export async function fetchEnvironmentalDataset(locationInput?: Partial<CityLoca
       ...cached.data,
       location: {
         ...cached.data.location,
-        name: locationInput?.name || cached.data.location.name,
+        name: resolvedName,
         country: locationInput?.country ?? cached.data.location.country,
         region: locationInput?.region ?? cached.data.location.region,
+        latitude: lat,
+        longitude: lon,
       },
       cached: true,
     };
@@ -253,11 +263,12 @@ export async function fetchEnvironmentalDataset(locationInput?: Partial<CityLoca
 
   const location: CityLocation = {
     id: locationInput?.id || `loc-${cacheKey}`,
-    name: locationInput?.name || DEFAULT_CITY.name,
+    name: resolvedName,
     region: locationInput?.region,
     country: locationInput?.country || '',
     latitude: lat,
     longitude: lon,
+    timezone: locationInput?.timezone,
   };
 
   const aqUrl = new URL('https://air-quality-api.open-meteo.com/v1/air-quality');
@@ -464,4 +475,125 @@ export async function searchCities(query: string): Promise<CityLocation[]> {
   });
 
   return results;
+}
+
+const NON_CITY_WORDS = new Set([
+  'today',
+  'tomorrow',
+  'tonight',
+  'morning',
+  'afternoon',
+  'evening',
+  'night',
+  'general',
+  'india',
+  'us',
+  'eu',
+  'aqi',
+  'eaqi',
+  'air',
+  'pollution',
+  'summer',
+  'winter',
+  'rain',
+  'the',
+  'my',
+  'our',
+  'this',
+  'that',
+  'home',
+  'indoors',
+  'outdoors',
+  'outside',
+  'inside',
+  'city',
+  'town',
+  'area',
+  'minutes',
+  'hours',
+  'days',
+  'percent',
+]);
+
+/**
+ * Checks whether a natural-language query explicitly names a city (e.g., "in Chennai", "for New Delhi").
+ * Ensures explicit city queries resolve cleanly to the requested city's exact coordinates rather than
+ * silently inheriting a previously cached or default location.
+ */
+export async function resolveQueryCityLocation(
+  query: string,
+  selectedLocation: Partial<CityLocation> | null,
+): Promise<{
+  explicitCityRequested: boolean;
+  requestedCityName?: string;
+  location: Partial<CityLocation> | null;
+  unresolvedError?: string;
+}> {
+  const qLower = query.toLowerCase();
+
+  // 1. Direct match against known preset cities (including "delhi" -> New Delhi, "bangalore" -> Bengaluru)
+  const presetAliases: Array<{ alias: RegExp; city: CityLocation }> = [
+    { alias: /\bnew\s+delhi\b|\bdelhi\b/i, city: PRESET_CITIES.find((c) => c.id === 'delhi-in')! },
+    { alias: /\bchennai\b/i, city: PRESET_CITIES.find((c) => c.id === 'chennai-in')! },
+    { alias: /\bbengaluru\b|\bbangalore\b/i, city: PRESET_CITIES.find((c) => c.id === 'bengaluru-in')! },
+    { alias: /\bmumbai\b/i, city: PRESET_CITIES.find((c) => c.id === 'mumbai-in')! },
+    { alias: /\bhyderabad\b/i, city: PRESET_CITIES.find((c) => c.id === 'hyderabad-in')! },
+    { alias: /\bsingapore\b/i, city: PRESET_CITIES.find((c) => c.id === 'singapore-sg')! },
+    { alias: /\blondon\b/i, city: PRESET_CITIES.find((c) => c.id === 'london-gb')! },
+    { alias: /\btokyo\b/i, city: PRESET_CITIES.find((c) => c.id === 'tokyo-jp')! },
+  ];
+
+  for (const item of presetAliases) {
+    if (item.city && item.alias.test(qLower)) {
+      return {
+        explicitCityRequested: true,
+        requestedCityName: item.city.name,
+        location: item.city,
+      };
+    }
+  }
+
+  // 2. Look for explicit capitalized place phrase after "in/for/at <Place>" in user's query
+  const explicitMatch = query.match(/\b(?:in|for|at|around|near)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/);
+  if (explicitMatch) {
+    const candidate = explicitMatch[1].trim();
+    const candidateLower = candidate.toLowerCase();
+    if (!NON_CITY_WORDS.has(candidateLower) && candidate.length >= 3) {
+      if (selectedLocation?.name && selectedLocation.name.toLowerCase() === candidateLower) {
+        return {
+          explicitCityRequested: true,
+          requestedCityName: selectedLocation.name,
+          location: selectedLocation,
+        };
+      }
+      try {
+        const matches = await searchCities(candidate);
+        if (matches.length > 0) {
+          return {
+            explicitCityRequested: true,
+            requestedCityName: candidate,
+            location: matches[0],
+          };
+        }
+        return {
+          explicitCityRequested: true,
+          requestedCityName: candidate,
+          location: null,
+          unresolvedError: `I could not resolve "${candidate}" to verified coordinates. Please select a city using the location selector and try again.`,
+        };
+      } catch {
+        return {
+          explicitCityRequested: true,
+          requestedCityName: candidate,
+          location: null,
+          unresolvedError: `I could not look up "${candidate}" right now. Please select your city from the location selector instead.`,
+        };
+      }
+    }
+  }
+
+  return {
+    explicitCityRequested: false,
+    location: selectedLocation,
+  };
 }

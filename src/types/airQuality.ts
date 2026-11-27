@@ -70,6 +70,7 @@ export interface PollutantMetric {
 
 export interface EnvironmentalDataset {
   location: CityLocation;
+  utcOffsetSeconds?: number;
   fetchedAt: string;
   currentTimestamp: string;
   modelSource: string;
@@ -159,6 +160,22 @@ export interface OrchestratorResponse {
   verification: VerificationReport;
   aiSynthesized: boolean;
   aiError?: string;
+  isHypothetical?: boolean;
+  hypotheticalScenario?: {
+    assumedAqi: number;
+    scale: AqiScale;
+    scaleLabel: string;
+    categoryLabel: string;
+    shortLabel: string;
+    liveSnapshotNote?: string;
+  };
+  resolvedLocation?: {
+    name: string;
+    country?: string;
+    latitude: number;
+    longitude: number;
+    timezone?: string;
+  };
 }
 
 export type HouseholdMemberGroup = 'adult' | 'child' | 'older_adult';
@@ -195,6 +212,8 @@ export interface RoutineWindow {
   suitabilityLabel: string;
   rationale: string;
   alternativeAction: string;
+  timeStatus?: 'future' | 'in_progress';
+  remainingMinutes?: number;
 }
 
 export interface RoutinePlanResult {
@@ -209,6 +228,9 @@ export interface RoutinePlanResult {
   verification: VerificationReport;
   dataTimestamp: string;
   dataSource: string;
+  localTimeLabel?: string;
+  excludedPastCount?: number;
+  rolledOverFromDate?: string;
 }
 
 export type ObservationCategory =
